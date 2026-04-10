@@ -14,7 +14,10 @@ async function getConnectedSupportedDevices(req, res) {
 
   return res.json({
     success: true,
-    data: devices
+    data: {
+      devices,
+      total: devices.length
+    }
   });
 }
 

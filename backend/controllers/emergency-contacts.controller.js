@@ -5,12 +5,16 @@ const { publishSettingsEvent } = require("../services/realtime-publisher.service
 async function getEmergencyContacts(req, res) {
   const userId = req.userId;
   const setting = await EmergencyContactSetting.findOne({ user_id: userId }).lean();
+  const contacts = setting?.contacts || [];
 
   return res.json({
     success: true,
     data: {
       user_id: userId,
-      contacts: setting?.contacts || []
+      contacts,
+      total_contacts: contacts.length,
+      fallback_emergency_number: "112",
+      using_fallback: contacts.length === 0
     }
   });
 }
@@ -19,10 +23,18 @@ async function upsertEmergencyContacts(req, res) {
   const userId = req.userId;
   const inputContacts = req.validated.body.contacts;
 
-  const normalizedContacts = inputContacts.map((contact) => ({
-    name: contact.name.trim(),
-    phone: normalizePhoneNumber(contact.phone)
-  }));
+  let normalizedContacts;
+  try {
+    normalizedContacts = inputContacts.map((contact) => ({
+      name: contact.name.trim(),
+      phone: normalizePhoneNumber(contact.phone)
+    }));
+  } catch (_) {
+    return res.status(400).json({
+      success: false,
+      error: "One or more phone numbers are invalid"
+    });
+  }
 
   const dedupeSet = new Set();
   for (const contact of normalizedContacts) {
@@ -48,7 +60,13 @@ async function upsertEmergencyContacts(req, res) {
 
   return res.json({
     success: true,
-    data: updated
+    data: {
+      user_id: userId,
+      contacts: updated.contacts,
+      total_contacts: updated.contacts.length,
+      fallback_emergency_number: "112",
+      using_fallback: updated.contacts.length === 0
+    }
   });
 }
 

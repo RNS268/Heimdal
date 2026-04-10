@@ -34,6 +34,11 @@ router.use(requireUser);
 
 router.get("/devices", asyncHandler(getConnectedSupportedDevices));
 router.post(
+  "/devices",
+  validate(updateDeviceSchema),
+  asyncHandler(upsertDeviceStatus)
+);
+router.post(
   "/devices/update",
   validate(updateDeviceSchema),
   asyncHandler(upsertDeviceStatus)

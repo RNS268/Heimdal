@@ -27,7 +27,6 @@ dependencies:
   audio_session: ^0.1.21
   rxdart: ^0.28.0
   external_app_launcher: ^4.0.3
-  nowplaying: ^3.0.3
   flutter_background_service: ^5.1.0
   android_intent_plus: ^6.0.0
   speech_to_text: ^7.3.0

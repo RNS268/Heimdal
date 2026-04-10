@@ -9,7 +9,6 @@ import '../../providers/ble_provider.dart';
 import '../../models/helmet_data.dart';
 import '../../services/analytics_service.dart';
 import '../../providers/navigation_provider.dart';
-import '../../models/settings_model.dart';
 import '../../services/settings_service.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -26,7 +25,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final helmetData = ref.watch(helmetDataStreamProvider);
     final analytics = ref.watch(analyticsProvider);
     final settings = ref.watch(settingsProvider);
-    final isImperial = settings.units == 'Imperial (mph)';
+    final isImperial = settings.units == 'imperial';
 
     final state = connectionState.valueOrNull;
     final isConnected = state == BleConnectionState.ready;

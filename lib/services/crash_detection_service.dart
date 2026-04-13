@@ -14,7 +14,10 @@ class CrashDetectionService {
   bool _isCrashConfirmed = false;
   bool _alertDispatched = false;
 
+  final Ref _ref;
   final CrashDetector _detector = CrashDetector();
+
+  CrashDetectionService(this._ref);
 
   Stream<bool> get crashStream => _crashController.stream;
   bool get isCrashConfirmed => _isCrashConfirmed;
@@ -41,10 +44,15 @@ class CrashDetectionService {
     }
   }
 
+  void forceCrash() {
+    _triggerCrashDetected();
+  }
+
   void _triggerCrashDetected() {
     if (_alertDispatched) return;
 
     _alertDispatched = true;
+    _ref.read(crashDetectedProvider.notifier).state = true;
     _crashController.add(true);
     _startConfirmationTimer();
   }
@@ -61,6 +69,7 @@ class CrashDetectionService {
     _isCrashConfirmed = false;
     _alertDispatched = false;
     _detector.reset();
+    _ref.read(crashDetectedProvider.notifier).state = false;
     _crashController.add(false);
   }
 
@@ -73,6 +82,7 @@ class CrashDetectionService {
     _isCrashConfirmed = false;
     _alertDispatched = false;
     _detector.reset();
+    _ref.read(crashDetectedProvider.notifier).state = false;
     _crashController.add(false);
   }
 
@@ -83,7 +93,7 @@ class CrashDetectionService {
 }
 
 final crashDetectionServiceProvider = Provider<CrashDetectionService>((ref) {
-  final service = CrashDetectionService();
+  final service = CrashDetectionService(ref);
   ref.onDispose(() => service.dispose());
   return service;
 });

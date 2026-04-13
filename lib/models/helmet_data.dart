@@ -20,7 +20,7 @@ class HelmetDataModel {
   final String rawDevData;
   final DateTime timestamp;
 
-  const HelmetDataModel({
+  HelmetDataModel({
     required this.speed,
     required this.indicator,
     required this.brake,

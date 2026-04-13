@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/ble_provider.dart';
+import '../../providers/simulation_provider.dart';
 import '../../models/sensor_data.dart';
 import '../../processing/data_processor.dart';
-import '../../services/sensor_fusion_service.dart';
 import '../../services/settings_service.dart';
 
 class RawDataScreen extends ConsumerStatefulWidget {
@@ -22,18 +22,37 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
     final sensorAsync = ref.watch(sensorDataStreamProvider);
     final rawAsync = ref.watch(rawBleDataProvider);
     final bleState = ref.watch(bleConnectionStateProvider);
-    final fusion = ref.watch(sensorFusionProvider);
     final settings = ref.watch(settingsProvider);
+    final sim = ref.watch(simulationProvider);
     final sensor = sensorAsync.valueOrNull;
-    final accel = sensor ??
-        (data != null
-            ? SensorData(ax: data.ax, ay: data.ay, az: data.az)
-            : null);
+
+    // Effective sensor data: prefer simulation when active
+    final SensorData? accel = sim.isRunning
+        ? SensorData(
+            ax: sim.ax, ay: sim.ay, az: sim.az,
+            gx: sim.gx, gy: sim.gy, gz: sim.gz,
+          )
+        : (sensor ??
+            (data != null
+                ? SensorData(ax: data.ax, ay: data.ay, az: data.az)
+                : null));
     final totalA = accel != null ? DataProcessor.totalAccelerationMagnitude(accel) : null;
     final tiltAxAz = accel != null ? DataProcessor.tiltAxAzDegrees(accel) : null;
     final motion = accel != null ? DataProcessor.motionStatusGravityReferenced(accel) : null;
     final isImperial = settings.units == 'Imperial (mph)';
-    final speed = isImperial ? fusion.currentSpeed * 0.621371 : fusion.currentSpeed;
+
+    // Speed / brake / collision: prefer simulation
+    final double effectiveSpeed = sim.isRunning ? sim.speed : 0.0;
+    final bool effectiveBraking = sim.isRunning ? sim.isBraking : false;
+    final bool effectiveCollision = sim.isRunning ? sim.isCrash : false;
+    final double effectiveLat = sim.isRunning
+        ? sim.latitude
+        : (data != null && data.latitude != 0 ? data.latitude : 0);
+    final double effectiveLng = sim.isRunning
+        ? sim.longitude
+        : (data != null && data.longitude != 0 ? data.longitude : 0);
+
+    final speed = isImperial ? effectiveSpeed * 0.621371 : effectiveSpeed;
     final speedUnit = isImperial ? 'mph' : 'km/h';
 
     return Scaffold(
@@ -50,11 +69,13 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
                 ),
                 children: [
                   _buildSequentialItem(
-                    'BLE STATUS',
-                    _bleStatusLabel(bleState.valueOrNull),
-                    Icons.bluetooth,
-                    color: _bleStatusColor(bleState.valueOrNull),
-                  ),
+              'BLE STATUS',
+              sim.isRunning ? 'SIMULATING (VIRTUAL)' : _bleStatusLabel(bleState.valueOrNull),
+              Icons.bluetooth,
+              color: sim.isRunning
+                  ? const Color(0xFF00BFA5)
+                  : _bleStatusColor(bleState.valueOrNull),
+            ),
                   _buildSequentialItem(
                     'ACCELERATION (AX / AY / AZ) m/s²',
                     accel != null
@@ -109,7 +130,7 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
                   ),
                   _buildSequentialItem(
                     'SYSTEM TIME',
-                    fusion.formattedTime,
+                    '00:00',
                     Icons.access_time,
                     color: AppColors.secondary,
                   ),
@@ -120,34 +141,34 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
                   ),
                   _buildSequentialItem(
                     'BRAKE STATUS',
-                    fusion.isBraking ? 'ACTIVE' : 'INACTIVE',
+                    effectiveBraking ? 'ACTIVE' : 'INACTIVE',
                     Icons.radio_button_checked,
-                    color: fusion.isBraking
+                    color: effectiveBraking
                         ? Colors.orange
                         : AppColors.onSurfaceVariant.withValues(alpha: 0.5),
                   ),
                   _buildSequentialItem(
                     'COLLISION STATUS',
-                    fusion.isCollision ? 'COLLISION DETECTED' : 'NORMAL',
+                    effectiveCollision ? 'COLLISION DETECTED' : 'NORMAL',
                     Icons.security,
-                    color: fusion.isCollision ? Colors.red : Colors.green,
+                    color: effectiveCollision ? Colors.red : Colors.green,
                   ),
                   _buildSequentialItem(
                     'LATITUDE',
-                    data != null && data.latitude != 0
-                        ? '${data.latitude.toStringAsFixed(4)}° N'
+                    effectiveLat != 0
+                        ? '${effectiveLat.toStringAsFixed(4)}° N'
                         : 'No GPS Signal',
                     Icons.north_east,
                   ),
                   _buildSequentialItem(
                     'LONGITUDE',
-                    data != null && data.longitude != 0
-                        ? '${data.longitude.toStringAsFixed(4)}° E'
+                    effectiveLng != 0
+                        ? '${effectiveLng.toStringAsFixed(4)}° E'
                         : 'No GPS Signal',
                     Icons.south_east,
                   ),
                   const SizedBox(height: 32),
-                  const Text(
+                  Text(
                     'DEBUG LOGS',
                     style: TextStyle(
                       fontSize: 12,
@@ -157,7 +178,7 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  _buildLogsSection(fusion.logs),
+                  _buildLogsSection([]),
                 ],
               ),
             ),
@@ -216,7 +237,7 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
           ),
         ],
       ),
-      child: const Row(
+      child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
@@ -304,7 +325,7 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
                       padding: const EdgeInsets.only(bottom: 6),
                       child: Text(
                         log,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: AppColors.outline,
                           fontSize: 11,
                           fontFamily: 'monospace',

@@ -1,321 +1,302 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../services/spotify_remote_service.dart';
+import 'package:external_app_launcher/external_app_launcher.dart';
+import '../../providers/music_provider.dart' hide AppColors;
+import '../../services/settings_service.dart';
 import '../../theme/app_colors.dart';
 
-class MusicScreen extends ConsumerStatefulWidget {
+class MusicScreen extends ConsumerWidget {
   const MusicScreen({super.key});
 
   @override
-  ConsumerState<MusicScreen> createState() => _MusicScreenState();
-}
-
-class _MusicScreenState extends ConsumerState<MusicScreen> {
-  bool _connected = false;
-  double _volume = 0.7;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initSpotify();
-    });
-  }
-
-  Future<void> _initSpotify() async {
-    final spotify = ref.read(spotifyRemoteProvider);
-    final connected = await spotify.connect();
-    setState(() => _connected = connected);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final spotify = ref.watch(spotifyRemoteProvider);
-    final trackInfo = spotify.trackInfo;
-    final playbackState = spotify.playbackState;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final musicState = ref.watch(musicProvider);
+    final musicNotifier = ref.read(musicProvider.notifier);
 
     return Scaffold(
-      backgroundColor: Colors.black,
-      body: _connected
-          ? SingleChildScrollView(
-              child: Column(
-                children: [
-                  // Header
-                  Container(
-                    padding: const EdgeInsets.only(top: 60, bottom: 30),
-                    child: const Text(
-                      'Now Playing',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
+      backgroundColor: AppColors.surface,
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.only(top: 60, bottom: 30),
+              child: const Text(
+                'Now Playing',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+
+            // Album Art
+            Container(
+              width: 280,
+              height: 280,
+              margin: const EdgeInsets.symmetric(vertical: 20),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(20),
+                image: musicState.albumArtBytes != null
+                    ? DecorationImage(
+                        image: MemoryImage(musicState.albumArtBytes!),
+                        fit: BoxFit.cover,
+                      )
+                    : null,
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withValues(alpha: 0.3),
+                    blurRadius: 30,
+                    spreadRadius: 5,
+                  ),
+                ],
+              ),
+              child: musicState.albumArtBytes == null
+                  ? Center(
+                      child: Icon(
+                        Icons.music_note,
+                        size: 120,
+                        color: AppColors.primary,
                       ),
-                    ),
-                  ),
+                    )
+                  : null,
+            ),
 
-                  // Album Art Placeholder
-                  Container(
-                    width: 280,
-                    height: 280,
-                    margin: const EdgeInsets.symmetric(vertical: 20),
-                    decoration: BoxDecoration(
-                      color: AppColors.success,
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.success.withOpacity(0.5),
-                          blurRadius: 20,
-                          spreadRadius: 5,
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.music_note,
-                      size: 120,
-                      color: Colors.white,
-                    ),
+            // Track Info
+            Column(
+              children: [
+                Text(
+                  musicState.songTitle,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
                   ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  musicState.artist,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.7),
+                    fontSize: 16,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
 
-                  // Track Info
-                  StreamBuilder<Map<String, String>>(
-                    stream: trackInfo,
-                    builder: (context, snapshot) {
-                      if (snapshot.hasData) {
-                        final info = snapshot.data!;
-                        return Column(
-                          children: [
-                            Text(
-                              info['track'] ?? 'No Track',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              info['artist'] ?? 'Unknown Artist',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.7),
-                                fontSize: 16,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        );
-                      }
-                      return const Text(
-                        'Connect to Spotify',
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 16,
-                        ),
-                      );
+            const SizedBox(height: 40),
+
+            // Progress Bar
+            Column(
+              children: [
+                SliderTheme(
+                  data: SliderThemeData(
+                    trackHeight: 4,
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 8,
+                    ),
+                    inactiveTrackColor: Colors.white.withValues(alpha: 0.2),
+                    activeTrackColor: AppColors.primary,
+                    thumbColor: AppColors.primary,
+                  ),
+                  child: Slider(
+                    value: musicState.currentPosition.inMilliseconds.toDouble().clamp(
+                        0.0, musicState.totalDuration.inMilliseconds.toDouble()),
+                    max: musicState.totalDuration.inMilliseconds.toDouble() > 0 
+                         ? musicState.totalDuration.inMilliseconds.toDouble() 
+                         : 1.0,
+                    onChanged: (value) {
+                      musicNotifier.seek(Duration(milliseconds: value.toInt()));
                     },
                   ),
-
-                  const SizedBox(height: 40),
-
-                  // Progress Bar
-                  StreamBuilder<Map<String, String>>(
-                    stream: trackInfo,
-                    builder: (context, snapshot) {
-                      if (snapshot.hasData) {
-                        final info = snapshot.data!;
-                        final position = int.tryParse(info['position'] ?? '0') ?? 0;
-                        final duration = int.tryParse(info['duration'] ?? '0') ?? 1;
-                        
-                        return Column(
-                          children: [
-                            SliderTheme(
-                              data: SliderThemeData(
-                                trackHeight: 4,
-                                thumbShape: const RoundSliderThumbShape(
-                                  enabledThumbRadius: 8,
-                                ),
-                                inactiveTrackColor: Colors.white.withOpacity(0.2),
-                                activeTrackColor: AppColors.success,
-                                thumbColor: AppColors.success,
-                              ),
-                              child: Slider(
-                                value: position.toDouble(),
-                                max: duration.toDouble(),
-                                onChanged: (value) {
-                                  spotify.seek(value.toInt());
-                                },
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 30),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    _formatDuration(position),
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.7),
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  Text(
-                                    _formatDuration(duration),
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.7),
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        );
-                      }
-                      return const SizedBox.shrink();
-                    },
-                  ),
-
-                  const SizedBox(height: 40),
-
-                  // Playback Controls
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 30),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // Previous
-                      _ControlButton(
-                        icon: Icons.skip_previous,
-                        onPressed: () => spotify.skipPrevious(),
-                        size: 40,
+                      Text(
+                        musicNotifier.formatDuration(musicState.currentPosition),
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.7),
+                          fontSize: 12,
+                        ),
                       ),
-
-                      // Play/Pause
-                      StreamBuilder<bool>(
-                        stream: playbackState,
-                        initialData: false,
-                        builder: (context, snapshot) {
-                          final isPlaying = snapshot.data ?? false;
-                          return _ControlButton(
-                            icon: isPlaying ? Icons.pause : Icons.play_arrow,
-                            onPressed: isPlaying
-                                ? () => spotify.pause()
-                                : () => spotify.play(),
-                            size: 60,
-                            isMainControl: true,
-                          );
-                        },
-                      ),
-
-                      // Next
-                      _ControlButton(
-                        icon: Icons.skip_next,
-                        onPressed: () => spotify.skipNext(),
-                        size: 40,
+                      Text(
+                        musicNotifier.formatDuration(musicState.totalDuration),
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.7),
+                          fontSize: 12,
+                        ),
                       ),
                     ],
                   ),
+                ),
+              ],
+            ),
 
-                  const SizedBox(height: 40),
+            const SizedBox(height: 40),
 
-                  // Volume Control
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 30),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Helmet Speaker Volume',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.7),
-                            fontSize: 14,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        SliderTheme(
-                          data: SliderThemeData(
-                            trackHeight: 6,
-                            thumbShape: const RoundSliderThumbShape(
-                              enabledThumbRadius: 10,
-                            ),
-                            inactiveTrackColor: Colors.white.withOpacity(0.2),
-                            activeTrackColor: AppColors.success,
-                            thumbColor: AppColors.success,
-                          ),
-                          child: Slider(
-                            value: _volume,
-                            min: 0,
-                            max: 1,
-                            onChanged: (value) {
-                              setState(() => _volume = value);
-                              spotify.setVolume(value);
-                            },
-                          ),
-                        ),
-                        Text(
-                          '${(_volume * 100).toInt()}%',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
+            // Playback Controls
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                // Previous
+                _ControlButton(
+                  icon: Icons.skip_previous,
+                  onPressed: () => musicNotifier.previous(),
+                  size: 40,
+                ),
+
+                // Play/Pause
+                _ControlButton(
+                  icon: musicState.isPlaying ? Icons.pause : Icons.play_arrow,
+                  onPressed: () => _handleMusicPlayPause(
+                    context,
+                    musicState,
+                    musicNotifier,
+                    ref.watch(settingsProvider).defaultMusicAppPackage,
+                    ref,
                   ),
+                  size: 60,
+                  isMainControl: true,
+                ),
 
-                  const SizedBox(height: 60),
-                ],
-              ),
-            )
-          : Center(
+                // Next
+                _ControlButton(
+                  icon: Icons.skip_next,
+                  onPressed: () => musicNotifier.next(),
+                  size: 40,
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 40),
+
+            // Volume Control
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 30),
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(
-                    Icons.music_note,
-                    size: 80,
-                    color: Colors.white30,
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'Spotify Not Connected',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
                   Text(
-                    'Make sure Spotify is running on your device',
+                    'Helmet Speaker Volume',
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.6),
+                      color: Colors.white.withValues(alpha: 0.7),
                       fontSize: 14,
                     ),
                   ),
-                  const SizedBox(height: 30),
-                  ElevatedButton(
-                    onPressed: _initSpotify,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.success,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 30,
-                        vertical: 12,
+                  const SizedBox(height: 12),
+                  SliderTheme(
+                    data: SliderThemeData(
+                      trackHeight: 6,
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 10,
                       ),
+                      inactiveTrackColor: Colors.white.withValues(alpha: 0.2),
+                      activeTrackColor: AppColors.primary,
+                      thumbColor: AppColors.primary,
                     ),
-                    child: const Text('Reconnect'),
+                    child: Slider(
+                      value: musicState.volume,
+                      min: 0,
+                      max: 1,
+                      onChanged: (value) {
+                        musicNotifier.setVolume(value);
+                      },
+                    ),
+                  ),
+                  Text(
+                    '${(musicState.volume * 100).toInt()}%',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ],
               ),
             ),
+
+            const SizedBox(height: 100),
+          ],
+        ),
+      ),
     );
   }
+}
 
-  String _formatDuration(int ms) {
-    final seconds = (ms / 1000).floor();
-    final minutes = (seconds / 60).floor();
-    final remainingSeconds = seconds % 60;
-    return '$minutes:${remainingSeconds.toString().padLeft(2, '0')}';
+Future<void> _handleMusicPlayPause(
+  BuildContext context,
+  MusicState musicState,
+  MusicNotifier musicNotifier,
+  String defaultMusicPackage,
+  WidgetRef ref,
+) async {
+  final shouldOpenMusicApp = !_hasActiveTrack(musicState);
+
+  if (shouldOpenMusicApp) {
+    final opened = await _launchMusicApp(context, defaultMusicPackage);
+    if (opened) {
+      // Wait a moment for the app to start playing
+      await Future.delayed(const Duration(milliseconds: 500));
+      // Refresh the music provider to get updated state
+      ref.invalidate(musicProvider);
+      return;
+    }
   }
+
+  await musicNotifier.playPause();
+}
+
+bool _hasActiveTrack(MusicState musicState) {
+  return musicState.totalDuration.inMilliseconds > 0 &&
+      musicState.songTitle != 'No Media' &&
+      musicState.songTitle != 'Permission Denied';
+}
+
+Future<bool> _launchMusicApp(BuildContext context, String defaultPackage) async {
+  final fallbackApps = [
+    'com.spotify.music',
+    'com.google.android.apps.youtube.music',
+    'com.amazon.mp3',
+    'com.soundcloud.android',
+    'com.google.android.music',
+    'com.apple.android.music',
+  ];
+
+  try {
+    if (defaultPackage.isNotEmpty) {
+      await LaunchApp.openApp(androidPackageName: defaultPackage, openStore: false);
+      return true;
+    }
+
+    if (Platform.isAndroid) {
+      for (final package in fallbackApps) {
+        final installed = await LaunchApp.isAppInstalled(androidPackageName: package);
+        if (installed == true) {
+          await LaunchApp.openApp(androidPackageName: package, openStore: false);
+          return true;
+        }
+      }
+    } else if (Platform.isIOS) {
+      await LaunchApp.openApp(iosUrlScheme: 'music://', openStore: false);
+      return true;
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(content: Text('No music app available to open.')),
+  );
+  return false;
 }
 
 class _ControlButton extends StatelessWidget {
@@ -339,25 +320,20 @@ class _ControlButton extends StatelessWidget {
         width: size,
         height: size,
         decoration: BoxDecoration(
-          color: isMainControl ? AppColors.success : Colors.white10,
+          color: isMainControl ? AppColors.primary : Colors.white10,
           shape: BoxShape.circle,
           boxShadow: isMainControl
               ? [
                   BoxShadow(
-                    color: AppColors.success.withOpacity(0.5),
+                    color: AppColors.primary.withValues(alpha: 0.5),
                     blurRadius: 15,
                     spreadRadius: 3,
                   ),
                 ]
               : [],
         ),
-        child: Icon(
-          icon,
-          size: size * 0.5,
-          color: Colors.white,
-        ),
+        child: Icon(icon, size: size * 0.5, color: isMainControl ? AppColors.onPrimaryContainer : Colors.white),
       ),
     );
   }
 }
-

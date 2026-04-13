@@ -1,13 +1,14 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/glass_card.dart';
 import '../../widgets/speed_display.dart';
 import '../../widgets/indicator_arrow.dart';
 import '../../providers/ble_provider.dart';
+import '../../providers/simulation_provider.dart';
 import '../../models/helmet_data.dart';
-import '../../services/analytics_service.dart';
 import '../../providers/navigation_provider.dart';
 import '../../services/settings_service.dart';
 
@@ -23,9 +24,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     final connectionState = ref.watch(bleConnectionStateProvider);
     final helmetData = ref.watch(helmetDataStreamProvider);
-    final analytics = ref.watch(analyticsProvider);
     final settings = ref.watch(settingsProvider);
-    final isImperial = settings.units == 'imperial';
+    final sim = ref.watch(simulationProvider);
+    final colorScheme = Theme.of(context).colorScheme;
+
+    // Merge: prefer simulation data when it's running
+    final HelmetDataModel? effectiveData = sim.isRunning
+        ? sim.toHelmetData()
+        : helmetData.valueOrNull;
 
     final state = connectionState.valueOrNull;
     final isConnected = state == BleConnectionState.ready;
@@ -33,42 +39,47 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final isWrong = state == BleConnectionState.wrongDevice;
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: colorScheme.surface,
       body: Stack(
         children: [
           SafeArea(
             child: Column(
               children: [
-                _buildTopBar(context, ref, state),
+                _buildTopBar(context, ref, state, sim.isRunning),
                 Expanded(
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (isVerifying)
+                        if (sim.isRunning)
+                          _buildStatusBanner(
+                            '⚡ SIMULATION ACTIVE — VIRTUAL TELEMETRY',
+                            const Color(0xFF00BFA5),
+                          )
+                        else if (isVerifying)
                           _buildStatusBanner(
                             'Verifying Module Status...',
-                            AppColors.primary,
-                          ),
-                        if (isWrong)
+                            Theme.of(context).colorScheme.primary,
+                          )
+                        else if (isWrong)
                           _buildStatusBanner(
                             'Wrong Device Connected. Please switch.',
-                            AppColors.error,
-                          ),
-                        if (isConnected && helmetData.valueOrNull != null)
+                            Theme.of(context).colorScheme.error,
+                          )
+                        else if (isConnected && helmetData.valueOrNull != null)
                           _buildStatusBanner(
                             'System Ready. Trip Active.',
-                            AppColors.secondary,
+                            Theme.of(context).colorScheme.secondary,
                           ),
                         const SizedBox(height: 16),
-                        _buildIndicatorsAndSpeed(helmetData.valueOrNull),
+                        _buildIndicatorsAndSpeed(effectiveData, settings.units == 'imperial'),
                         const SizedBox(height: 32),
-                        _buildSecondaryTelemetry(helmetData.valueOrNull),
+                        _buildSecondaryTelemetry(effectiveData),
                         const SizedBox(height: 24),
                         _buildConnectedDevices(connectionState.valueOrNull),
                         const SizedBox(height: 24),
-                        _buildRideAnalytics(analytics, isImperial),
+                        _buildRideAnalytics(effectiveData, settings.units == 'imperial', sim),
                         const SizedBox(height: 24),
                       ],
                     ),
@@ -86,16 +97,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     BuildContext context,
     WidgetRef ref,
     BleConnectionState? state,
+    bool simRunning,
   ) {
     final isConnected = state == BleConnectionState.ready;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    // Determine the label/icon/colour for the left status chip
+    final btState = FlutterBluePlus.adapterStateNow;
+    final bool btOff = btState == BluetoothAdapterState.off;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
       decoration: BoxDecoration(
-        color: AppColors.background.withValues(alpha: 0.6),
+        color: colorScheme.surface.withValues(alpha: 0.6),
         boxShadow: [
           BoxShadow(
-            color: Colors.white.withValues(alpha: 0.06),
+            color: colorScheme.brightness == Brightness.dark
+                ? Colors.white.withValues(alpha: 0.06)
+                : Colors.black.withValues(alpha: 0.05),
             blurRadius: 32,
             offset: const Offset(0, 24),
           ),
@@ -110,25 +129,41 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               Row(
                 children: [
                   Icon(
-                    isConnected
-                        ? Icons.bluetooth_connected
-                        : Icons.bluetooth_disabled,
-                    color: AppColors.secondary,
+                    simRunning
+                        ? Icons.science
+                        : (btOff
+                            ? Icons.bluetooth_disabled
+                            : (isConnected
+                                ? Icons.bluetooth_connected
+                                : Icons.bluetooth_disabled)),
+                    color: simRunning
+                        ? const Color(0xFF00BFA5)
+                        : (btOff
+                            ? colorScheme.error
+                            : colorScheme.secondary),
                     size: 20,
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    isConnected ? 'LINKED' : 'DISCONNECTED',
-                    style: const TextStyle(
+                    simRunning
+                        ? 'SIMULATING'
+                        : (btOff
+                            ? 'BLUETOOTH OFF'
+                            : (isConnected ? 'LINKED' : 'DISCONNECTED')),
+                    style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                       letterSpacing: 2,
-                      color: AppColors.secondary,
+                      color: simRunning
+                          ? const Color(0xFF00BFA5)
+                          : (btOff
+                              ? colorScheme.error
+                              : colorScheme.secondary),
                     ),
                   ),
                 ],
               ),
-              const Text(
+              Text(
                 'HEIMDALL',
                 style: TextStyle(
                   fontSize: 20,
@@ -145,10 +180,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 child: Icon(
                   Icons.bluetooth,
                   color: isConnected
-                      ? AppColors.primary
+                      ? colorScheme.primary
                       : (state == BleConnectionState.wrongDevice
-                            ? AppColors.error
-                            : AppColors.outline),
+                            ? colorScheme.error
+                            : colorScheme.outline),
                   size: 20,
                 ),
               ),
@@ -159,8 +194,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Widget _buildIndicatorsAndSpeed(HelmetDataModel? data) {
-    final speed = data?.speed ?? 0.0;
+  Widget _buildIndicatorsAndSpeed(HelmetDataModel? data, bool isImperial) {
+    final rawSpeed = data?.speed ?? 0.0;
+    final speed = isImperial ? rawSpeed * 0.621371 : rawSpeed;
+    final unit = isImperial ? 'mph' : 'km/h';
     final isTurningLeft = data?.isTurningLeft ?? false;
     final isTurningRight = data?.isTurningRight ?? false;
     final isBraking = data?.isBraking ?? false;
@@ -175,7 +212,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ],
         ),
         const SizedBox(height: 24),
-        SpeedDisplay(speed: speed),
+        SpeedDisplay(speed: speed, unit: unit),
         if (isBraking) ...[const SizedBox(height: 24), _buildBrakeWarning()],
       ],
     );
@@ -190,7 +227,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         children: [
           _PulsingDot(),
           const SizedBox(width: 16),
-          const Text(
+          Text(
             'BRAKE',
             style: TextStyle(
               fontSize: 16,
@@ -218,10 +255,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   color: AppColors.surfaceContainerHigh,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Column(
+                child: Column(
                   children: [
                     Icon(Icons.health_and_safety, color: AppColors.secondary),
-                    SizedBox(height: 8),
+                    const SizedBox(height: 8),
                     Text(
                       'Crash Sensor',
                       style: TextStyle(
@@ -231,7 +268,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         color: AppColors.outline,
                       ),
                     ),
-                    SizedBox(height: 4),
+                    const SizedBox(height: 4),
                     Text(
                       'NORMAL',
                       style: TextStyle(
@@ -261,7 +298,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           borderRadius: BorderRadius.circular(12),
                           child: Container(
                             color: AppColors.surfaceContainerLowest,
-                            child: const Center(
+                            child: Center(
                               child: Icon(
                                 Icons.map,
                                 size: 40,
@@ -271,7 +308,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           ),
                         ),
                       ),
-                      const Positioned(
+                      Positioned(
                         left: 12,
                         bottom: 12,
                         child: Row(
@@ -281,7 +318,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               size: 14,
                               color: AppColors.tertiary,
                             ),
-                            SizedBox(width: 4),
+                            const SizedBox(width: 4),
                             Text(
                               'MAP VIEW',
                               style: TextStyle(
@@ -311,7 +348,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'CONNECTED DEVICES',
           style: TextStyle(
             fontSize: 12,
@@ -334,7 +371,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   isConnected: true,
                 )
               else
-                const Center(
+                Center(
                   child: Text(
                     'No Devices Linked',
                     style: TextStyle(fontSize: 12, color: AppColors.outline),
@@ -385,7 +422,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               children: [
                 Text(
                   name,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
                     color: AppColors.onSurface,
@@ -404,7 +441,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
           ),
           if (isConnected)
-            const Icon(Icons.check_circle, color: AppColors.primary, size: 20)
+            Icon(Icons.check_circle, color: AppColors.primary, size: 20)
           else
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -412,7 +449,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 color: AppColors.primary,
                 borderRadius: BorderRadius.circular(4),
               ),
-              child: const Text(
+              child: Text(
                 'Connect',
                 style: TextStyle(
                   fontSize: 10,
@@ -426,20 +463,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Widget _buildRideAnalytics(AnalyticsState analytics, bool isImperial) {
-    final distance = isImperial
-        ? analytics.totalDistance * 0.621371
-        : analytics.totalDistance;
-    final avgSpeed = isImperial
-        ? analytics.averageSpeed * 0.621371
-        : analytics.averageSpeed;
+  Widget _buildRideAnalytics(HelmetDataModel? data, bool isImperial, SimulationState sim) {
+    final double rawDist = sim.isRunning
+        ? 0.42 // Placeholder for mock distance in sim
+        : 0.0;
+    final double rawAvg = sim.isRunning ? sim.speed * 0.9 : (data?.speed ?? 0.0);
+
+    final distance = isImperial ? rawDist * 0.621371 : rawDist;
+    final avgSpeed = isImperial ? rawAvg * 0.621371 : rawAvg;
     final distanceUnit = isImperial ? 'mi' : 'km';
     final speedUnit = isImperial ? 'mph' : 'km/h';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'LIVE ANALYTICS',
           style: TextStyle(
             fontSize: 12,
@@ -452,57 +490,61 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         Row(
           children: [
             Expanded(
-              child: _buildAnalyticsCard('Time', analytics.formattedTime),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildAnalyticsCard(
-                'Dist',
-                '${distance.toStringAsFixed(2)} $distanceUnit',
+              child: GlassCard(
+                padding: const EdgeInsets.all(16),
+                borderRadius: 12,
+                child: Column(
+                  children: [
+                    Text(
+                      distance.toStringAsFixed(2),
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                    Text(
+                      'DISTANCE ($distanceUnit)',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.outline,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 16),
             Expanded(
-              child: _buildAnalyticsCard(
-                'Avg Spd',
-                '${avgSpeed.toStringAsFixed(1)} $speedUnit',
+              child: GlassCard(
+                padding: const EdgeInsets.all(16),
+                borderRadius: 12,
+                child: Column(
+                  children: [
+                    Text(
+                      avgSpeed.toStringAsFixed(1),
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.secondary,
+                      ),
+                    ),
+                    Text(
+                      'AVG SPEED ($speedUnit)',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.outline,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
         ),
       ],
-    );
-  }
-
-  Widget _buildAnalyticsCard(String label, String value) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        children: [
-          Text(
-            label.toUpperCase(),
-            style: const TextStyle(
-              fontSize: 9,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 1,
-              color: AppColors.outline,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: AppColors.onSurface,
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -519,9 +561,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           return Container(
             height: MediaQuery.of(context).size.height * 0.7,
             padding: const EdgeInsets.all(24),
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               color: AppColors.surfaceContainer,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             ),
             child: Column(
               children: [
@@ -534,7 +576,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                 ),
                 const SizedBox(height: 24),
-                const Text(
+                Text(
                   'Select Helmet Device',
                   style: TextStyle(
                     fontSize: 18,
@@ -547,9 +589,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   child: scanResults.when(
                     data: (results) {
                       if (results.isEmpty) {
-                        return const Center(
-                          child: Text('Scanning for devices...'),
-                        );
+                        return const Center(child: Text('Scanning for devices...'));
                       }
                       return ListView.builder(
                         itemCount: results.length,
@@ -572,8 +612,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         },
                       );
                     },
-                    loading: () =>
-                        const Center(child: CircularProgressIndicator()),
+                    loading: () => const Center(child: CircularProgressIndicator()),
                     error: (e, s) => Center(child: Text('Error: $e')),
                   ),
                 ),

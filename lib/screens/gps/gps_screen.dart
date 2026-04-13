@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/ble_provider.dart';
 import '../../services/navigation_service.dart';
-import '../../models/settings_model.dart';
 import '../../services/settings_service.dart';
 import '../../models/navigation_data.dart';
 
@@ -84,7 +83,7 @@ class _GpsScreenState extends ConsumerState<GpsScreen> {
   Widget _buildTopAppBar() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-      child: const Row(
+      child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Icon(Icons.bluetooth_connected, color: AppColors.primary, size: 20),
@@ -160,7 +159,7 @@ class _GpsScreenState extends ConsumerState<GpsScreen> {
                     children: [
                       Text(
                         _currentSpeed.toInt().toString(),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.w700,
                           color: AppColors.onSurface,
@@ -171,7 +170,7 @@ class _GpsScreenState extends ConsumerState<GpsScreen> {
                         padding: const EdgeInsets.only(bottom: 2),
                         child: Text(
                           isImperial ? 'MPH' : 'KM/H',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.w700,
                             letterSpacing: 1,

@@ -16,7 +16,7 @@ class SensorData {
   final double gy;
   final double gz;
 
-  const SensorData({
+  SensorData({
     required this.ax,
     required this.ay,
     required this.az,

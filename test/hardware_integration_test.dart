@@ -1,5 +1,6 @@
 /// Hardware Integration Tests
 /// Tests to verify ESP32 firmware data is correctly parsed and handled by Flutter app
+library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:heimdall/models/helmet_data.dart';
@@ -23,7 +24,11 @@ void main() {
         final result = Parser.parse(data);
 
         expect(result, isNotNull);
-        expect(result?.crash, equals(true), reason: 'ACCT should indicate crash');
+        expect(
+          result?.crash,
+          equals(true),
+          reason: 'ACCT should indicate crash',
+        );
       });
 
       test('Parse crash status NO (no crash)', () {
@@ -32,7 +37,11 @@ void main() {
         final result = Parser.parse(data);
 
         expect(result, isNotNull);
-        expect(result?.crash, equals(false), reason: 'NO should indicate no crash');
+        expect(
+          result?.crash,
+          equals(false),
+          reason: 'NO should indicate no crash',
+        );
       });
 
       test('Parse left indicator', () {
@@ -102,8 +111,11 @@ void main() {
             'SP:0.0,I:NONE,B:0,C:ACCT,LAT:40.7128,LOG:-74.0060,CLK:0,DEV:AX:7.5,AY:3.2,AZ:1.1';
         final result = Parser.parse(data);
 
-        expect(result?.crash, equals(true),
-            reason: 'High impact with ACCT should be crash');
+        expect(
+          result?.crash,
+          equals(true),
+          reason: 'High impact with ACCT should be crash',
+        );
       });
 
       test('Detect crash with sudden stop', () {
@@ -111,8 +123,11 @@ void main() {
             'SP:0.0,I:NONE,B:1,C:ACCT,LAT:40.7128,LOG:-74.0060,CLK:0,DEV:AX:0.5,AY:0.2,AZ:9.81';
         final result = Parser.parse(data);
 
-        expect(result?.crash, equals(true),
-            reason: 'Brake engaged with ACCT should be crash');
+        expect(
+          result?.crash,
+          equals(true),
+          reason: 'Brake engaged with ACCT should be crash',
+        );
       });
 
       test('Parse extreme pitch (crash scenario)', () {
@@ -178,8 +193,11 @@ void main() {
         expect(result, isNotNull);
         expect(result?.speed, equals(0.0));
         expect(result?.brake, equals(true));
-        expect(result?.crash, equals(true),
-            reason: 'C:ACCT indicates crash confirmed');
+        expect(
+          result?.crash,
+          equals(true),
+          reason: 'C:ACCT indicates crash confirmed',
+        );
         expect(result?.latitude, equals(40.7128));
         expect(result?.longitude, equals(-74.0060));
       });
@@ -229,8 +247,11 @@ void main() {
 
         final packet = Parser.toPacketString(model);
 
-        expect(packet, contains('C:ACCT'),
-            reason: 'Crash should generate ACCT status');
+        expect(
+          packet,
+          contains('C:ACCT'),
+          reason: 'Crash should generate ACCT status',
+        );
         expect(packet, contains('B:1'));
       });
     });

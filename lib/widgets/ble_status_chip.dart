@@ -31,7 +31,7 @@ class BleStatusChip extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 deviceName!,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                   color: AppColors.primary,

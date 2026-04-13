@@ -72,7 +72,7 @@ class _IndicatorArrowState extends State<IndicatorArrow>
               const SizedBox(height: 4),
               Text(
                 widget.isLeft ? 'LEFT' : 'RIGHT',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 1.5,

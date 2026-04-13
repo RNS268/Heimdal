@@ -14,7 +14,7 @@ class NavigationData {
   final double distanceToTurn; // in meters
   final IconData icon;
 
-  const NavigationData({
+  NavigationData({
     required this.instruction,
     required this.streetName,
     required this.distanceToTurn,

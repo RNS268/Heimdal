@@ -2,8 +2,10 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../models/device_model.dart';
 import '../models/helmet_data.dart';
 import '../models/sensor_data.dart';
@@ -53,6 +55,16 @@ class BleService {
 
     try {
       if (await FlutterBluePlus.isSupported == false) return;
+      if (Platform.isAndroid) {
+        final scanStatus = await Permission.bluetoothScan.request();
+        final connectStatus = await Permission.bluetoothConnect.request();
+        final locationStatus = await Permission.locationWhenInUse.request();
+
+        if (!scanStatus.isGranted || !connectStatus.isGranted || !locationStatus.isGranted) {
+          _connectionStateController.add(BleConnectionState.error);
+          return;
+        }
+      }
 
       _scanSubscription?.cancel();
       _scanSubscription = FlutterBluePlus.scanResults.listen((results) {

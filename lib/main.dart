@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app.dart';
-import 'services/background_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -11,7 +10,7 @@ void main() async {
   
   runApp(
     const ProviderScope(
-      child: HeimdallApp(),
+      child: const HeimdallApp(),
     ),
   );
 }

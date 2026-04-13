@@ -7,6 +7,8 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 /// ============================================================================
 /// HELMET SAFETY SERVICE - COMPLETE ALL-IN-ONE CORE
@@ -26,9 +28,41 @@ import 'dart:convert';
 
 final service = FlutterBackgroundService();
 
+ 
+
 /// Initialize the background service
 Future<void> initializeBackgroundService() async {
   try {
+    if (Platform.isAndroid) {
+      await Permission.notification.request();
+      final status = await Permission.locationWhenInUse.request();
+      if (status.isGranted) {
+        await Permission.locationAlways.request();
+      }
+      
+      // If location is denied, the foreground service WILL crash in Android 14.
+      if (!await Permission.location.isGranted) {
+        print('❌ [SERVICE] Location permission denied. Cannot start background service safely.');
+        return;
+      }
+      
+      // CREATE THE NOTIFICATION CHANNEL FIRST
+      const AndroidNotificationChannel channel = AndroidNotificationChannel(
+        'helmet_safety_channel', // id
+        'Helmet Safety Service', // name
+        description: 'This channel is used for important safety notifications.', // description
+        importance: Importance.high, 
+      );
+      
+      final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+          FlutterLocalNotificationsPlugin();
+          
+      await flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(channel);
+    }
+    
     await service.configure(
       androidConfiguration: AndroidConfiguration(
         onStart: onStart,
@@ -71,31 +105,14 @@ void onStart(ServiceInstance service) async {
     final detector = _CrashDetector();
     final sosManager = _SOSManager();
     final bleManager = _BLEManager();
-
-    // Start BLE scanning
-    bleManager.startScanning(
-      onDataReceived: (accel, gyro) {
-        final isCrash = detector.analyze(accel, gyro);
-
-        if (isCrash && !state.crashTriggered) {
-          print('💥 [CRASH] Detected! Triggering SOS...');
-          state.crashTriggered = true;
-          sosManager.triggerSOS();
-
-          // Reset after 5 minutes
-          Future.delayed(Duration(minutes: 5), () {
-            state.crashTriggered = false;
-          });
-        }
-      },
-      onError: (error) {
-        print('⚠️ [BLE] Error: $error');
-      },
-    );
+    // BLE scanning is intentionally not started from the headless background service.
+    // flutter_blue_plus requires an Android Activity to ask for permissions, and
+    // this service runs without an activity binding.
+    print('⚠️ [BLE] Background BLE scan disabled; start BLE scanning from the foreground UI instead.');
 
     // Service loop - keeps everything running
     late Timer periodicTimer;
-    periodicTimer = Timer.periodic(Duration(milliseconds: 100), (timer) {
+    periodicTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
       // Note: setNotificationInfo is not available in newer versions
       // Update notification using service.setForegroundNotificationInfo instead if available
     });
@@ -116,12 +133,12 @@ void onStart(ServiceInstance service) async {
 /// ============================================================================
 
 class _CrashDetector {
-  static const double ACCEL_THRESHOLD = 3.5; // G-force
-  static const double GYRO_THRESHOLD = 600; // degrees/sec
-  static const double VARIANCE_THRESHOLD = 1.5;
+  static const double accelThreshold = 3.5; // G-force
+  static const double gyroThreshold = 600; // degrees/sec
+  static const double varianceThreshold = 1.5;
 
-  List<double> _accelHistory = [];
-  List<double> _gyroHistory = [];
+  final List<double> _accelHistory = [];
+  final List<double> _gyroHistory = [];
   bool _inCrashWindow = false;
   DateTime? _crashWindowStart;
 
@@ -138,7 +155,7 @@ class _CrashDetector {
     if (_gyroHistory.length > 10) _gyroHistory.removeAt(0);
 
     // Check if entering crash zone
-    if (accelMag > ACCEL_THRESHOLD && gyroMag > GYRO_THRESHOLD) {
+    if (accelMag > accelThreshold && gyroMag > gyroThreshold) {
       if (!_inCrashWindow) {
         _inCrashWindow = true;
         _crashWindowStart = DateTime.now();
@@ -151,7 +168,7 @@ class _CrashDetector {
         DateTime.now().difference(_crashWindowStart!).inSeconds >= 3) {
       final variance = _calculateVariance(_accelHistory);
 
-      if (variance > VARIANCE_THRESHOLD) {
+      if (variance > varianceThreshold) {
         _inCrashWindow = false;
         return true; // CRASH CONFIRMED
       }
@@ -188,22 +205,17 @@ class _CrashDetector {
 /// ============================================================================
 
 class _BLEManager {
-  static const String HELMET_DEVICE_NAME = "ESP32_HELMET";
-  static const String HELMET_SERVICE_UUID =
-      "12345678-1234-5678-1234-567812345678";
-  static const String HELMET_CHAR_UUID =
-      "87654321-4321-8765-4321-876543218765";
+  static const String helmetDeviceName = "ESP32_HELMET";
 
   BluetoothDevice? _device;
-  BluetoothCharacteristic? _characteristic;
   StreamSubscription? _scanSubscription;
   StreamSubscription? _connectionSubscription;
   StreamSubscription? _dataSubscription;
 
   bool isConnected = false;
   int reconnectAttempts = 0;
-  static const int MAX_RECONNECT_ATTEMPTS = 5;
-  static const List<int> RECONNECT_DELAYS = [3, 5, 10, 15, 30]; // seconds
+  static const int maxReconnectAttempts = 5;
+  static const List<int> reconnectDelays = [3, 5, 10, 15, 30]; // seconds
 
   Function(List<double>, List<double>)? _onDataReceived;
   Function(String)? _onError;
@@ -215,7 +227,8 @@ class _BLEManager {
     _onDataReceived = onDataReceived;
     _onError = onError;
 
-    _scan();
+    _onError?.call('Background BLE scanning is disabled in the headless service.');
+    print('⚠️ [BLE] Background BLE scan called but disabled in headless service.');
   }
 
   Future<void> _scan() async {
@@ -223,13 +236,13 @@ class _BLEManager {
 
     try {
       // ignore: unused_result
-      await FlutterBluePlus.startScan(timeout: Duration(seconds: 8));
+      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 8));
 
       // ignore: unused_result
       _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
         for (var result in results) {
-          if (result.device.name == HELMET_DEVICE_NAME) {
-            print('✓ [BLE] Found helmet: ${result.device.name}');
+          if (result.device.platformName == helmetDeviceName) {
+            print('✓ [BLE] Found helmet: ${result.device.platformName}');
 
             // Fire and forget the connection
             // ignore: unused_result
@@ -241,17 +254,17 @@ class _BLEManager {
       });
     } catch (e) {
       _onError?.call('Scan failed: $e');
-      await Future.delayed(Duration(seconds: 5));
+      await Future.delayed(const Duration(seconds: 5));
       await _scan();
     }
   }
 
   Future<void> _connect(BluetoothDevice device) async {
     try {
-      print('🔗 [BLE] Connecting to ${device.name}...');
+      print('🔗 [BLE] Connecting to ${device.platformName}...');
 
       _device = device;
-      await device.connect(timeout: Duration(seconds: 10));
+      await device.connect(timeout: const Duration(seconds: 10));
       isConnected = true;
       reconnectAttempts = 0;
 
@@ -283,12 +296,11 @@ class _BLEManager {
       for (var service in services) {
         for (var characteristic in service.characteristics) {
           if (characteristic.properties.notify) {
-            _characteristic = characteristic;
             print('✓ [BLE] Found data characteristic');
 
             await characteristic.setNotifyValue(true);
 
-            _dataSubscription = characteristic.value.listen((value) {
+            _dataSubscription = characteristic.lastValueStream.listen((value) {
               _parseData(value);
             });
             return;
@@ -325,16 +337,16 @@ class _BLEManager {
   }
 
   Future<void> _reconnect() async {
-    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    if (reconnectAttempts >= maxReconnectAttempts) {
       print('✗ [BLE] Max reconnect attempts reached');
       _scan();
       reconnectAttempts = 0;
       return;
     }
 
-    final delay = RECONNECT_DELAYS[reconnectAttempts];
+    final delay = reconnectDelays[reconnectAttempts];
     print(
-        '⏳ [BLE] Reconnecting in ${delay}s (attempt ${reconnectAttempts + 1}/$MAX_RECONNECT_ATTEMPTS)');
+        '⏳ [BLE] Reconnecting in ${delay}s (attempt ${reconnectAttempts + 1}/$maxReconnectAttempts)');
 
     reconnectAttempts++;
 
@@ -360,8 +372,8 @@ class _BLEManager {
 /// ============================================================================
 
 class _SOSManager {
-  static const int COUNTDOWN_SECONDS = 10;
-  static const int COOLDOWN_MINUTES = 5;
+  static const int countdownSeconds = 10;
+  static const int cooldownMinutes = 5;
 
   int sosCount = 0;
   DateTime? _lastSOSTime;
@@ -371,9 +383,9 @@ class _SOSManager {
     // Check cooldown
     if (_lastSOSTime != null) {
       final elapsed = DateTime.now().difference(_lastSOSTime!);
-      if (elapsed.inMinutes < COOLDOWN_MINUTES) {
+      if (elapsed.inMinutes < cooldownMinutes) {
         print(
-            '⏱️ [SOS] In cooldown. Next SOS available in ${COOLDOWN_MINUTES - elapsed.inMinutes}m');
+            '⏱️ [SOS] In cooldown. Next SOS available in ${cooldownMinutes - elapsed.inMinutes}m');
         return;
       }
     }
@@ -381,14 +393,14 @@ class _SOSManager {
     _lastSOSTime = DateTime.now();
     sosCount++;
 
-    print('🚨 [SOS] Countdown started (${COUNTDOWN_SECONDS}s)');
+    print('🚨 [SOS] Countdown started (${countdownSeconds}s)');
     _countdownActive = true;
 
     bool cancelled = false;
 
     // 10-second countdown
-    for (int i = COUNTDOWN_SECONDS; i > 0; i--) {
-      await Future.delayed(Duration(seconds: 1));
+    for (int i = countdownSeconds; i > 0; i--) {
+      await Future.delayed(const Duration(seconds: 1));
 
       if (!_countdownActive) {
         print('✓ [SOS] Cancelled by user');
@@ -426,7 +438,7 @@ class _SOSManager {
     } catch (e) {
       print('✗ [SOS] Failed to send: $e');
       // Retry in 30 seconds
-      await Future.delayed(Duration(seconds: 30));
+      await Future.delayed(const Duration(seconds: 30));
       _sendSOS();
     }
   }
@@ -434,7 +446,7 @@ class _SOSManager {
   Future<Position> _getCurrentLocation() async {
     try {
       return await Geolocator.getCurrentPosition(
-        timeLimit: Duration(seconds: 10),
+        timeLimit: const Duration(seconds: 10),
       );
     } catch (e) {
       print('⚠️ [GPS] Failed: $e');
@@ -457,31 +469,31 @@ class _SOSManager {
   Future<void> _sendViaTwilio(String message) async {
     try {
       // ⚠️ CONFIGURE THESE IN PRODUCTION
-      const String TWILIO_SID = "YOUR_TWILIO_SID";
-      const String TWILIO_TOKEN = "YOUR_TWILIO_TOKEN";
-      const String TWILIO_FROM = "YOUR_TWILIO_PHONE";
-      const String EMERGENCY_TO = "+91XXXXXXXXXX";
+      const String twilioSid = "YOUR_TWILIO_SID";
+      const String twilioToken = "YOUR_TWILIO_TOKEN";
+      const String twilioFrom = "YOUR_TWILIO_PHONE";
+      const String emergencyTo = "+91XXXXXXXXXX";
 
-      if (TWILIO_SID == "YOUR_TWILIO_SID") {
+      if (twilioSid == "YOUR_TWILIO_SID") {
         print('⚠️ [TWILIO] Not configured - skipping');
         return;
       }
 
       final uri = Uri.parse(
-          'https://api.twilio.com/2010-04-01/Accounts/$TWILIO_SID/Messages.json');
+          'https://api.twilio.com/2010-04-01/Accounts/$twilioSid/Messages.json');
 
       final response = await http.post(
         uri,
         headers: {
           'Authorization':
-              'Basic ${base64Encode(utf8.encode('$TWILIO_SID:$TWILIO_TOKEN'))}',
+              'Basic ${base64Encode(utf8.encode('$twilioSid:$twilioToken'))}',
         },
         body: {
-          'From': TWILIO_FROM,
-          'To': EMERGENCY_TO,
+          'From': twilioFrom,
+          'To': emergencyTo,
           'Body': message,
         },
-      ).timeout(Duration(seconds: 5));
+      ).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 201) {
         print('✓ [TWILIO] SMS sent successfully');

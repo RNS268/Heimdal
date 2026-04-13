@@ -1,10 +1,13 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_sms/flutter_sms.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'settings_service.dart';
 import 'phone_call_service.dart';
 
 class EmergencyAlertService {
   final Ref _ref;
+  static const MethodChannel _smsChannel =
+      MethodChannel('com.heimdall.helmet/emergency_calls');
 
   EmergencyAlertService(this._ref);
 
@@ -77,8 +80,40 @@ class EmergencyAlertService {
     }
   }
 
+  Future<bool> _requestSmsPermission() async {
+    final status = await Permission.sms.request();
+    return status.isGranted;
+  }
+
+  Future<bool> _sendDirectSms({
+    required String message,
+    required List<String> recipients,
+  }) async {
+    if (!await _requestSmsPermission()) {
+      print('❌ [EMERGENCY] SMS permission denied');
+      return false;
+    }
+
+    try {
+      final result = await _smsChannel.invokeMethod<bool>(
+        'sendEmergencySms',
+        {
+          'message': message,
+          'recipients': recipients,
+        },
+      );
+      return result == true;
+    } on PlatformException catch (e) {
+      print('❌ [EMERGENCY] SMS platform error: ${e.message}');
+      return false;
+    } catch (e) {
+      print('❌ [EMERGENCY] SMS send error: $e');
+      return false;
+    }
+  }
+
   /// Send SMS to ALL emergency contacts with location
-  Future<void> sendCrashAlerts({
+  Future<bool> sendCrashAlerts({
     required double latitude,
     required double longitude,
   }) async {
@@ -87,9 +122,7 @@ class EmergencyAlertService {
     final message =
         'CRASH ALERT: I may have had an accident. My location: $mapsUrl';
 
-    try {
-      await sendSMS(message: message, recipients: contacts);
-    } catch (_) {}
+    return await _sendDirectSms(message: message, recipients: contacts);
   }
 }
 

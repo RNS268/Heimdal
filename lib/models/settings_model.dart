@@ -2,7 +2,7 @@ class EmergencyContact {
   final String name;
   final String phone;
 
-  const EmergencyContact({required this.name, required this.phone});
+  EmergencyContact({required this.name, required this.phone});
 
   Map<String, dynamic> toJson() => {"name": name, "phone": phone};
 
@@ -19,32 +19,35 @@ class SettingsModel {
   final String units;
   final String crashSensitivity;
   final bool autoSOS;
+  final String defaultMusicAppPackage;
   final List<EmergencyContact> emergencyContacts;
   final Map<String, dynamic> crashThresholds;
   final DateTime? lastSyncedAt;
 
-  const SettingsModel({
+  SettingsModel({
     required this.theme,
     required this.units,
     required this.crashSensitivity,
     required this.autoSOS,
+    this.defaultMusicAppPackage = '',
     this.emergencyContacts = const [],
     this.crashThresholds = const {},
     this.lastSyncedAt,
   });
 
-  factory SettingsModel.defaults() => const SettingsModel(
-    theme: "dark",
-    units: "metric",
-    crashSensitivity: "medium",
-    autoSOS: true,
-  );
+  factory SettingsModel.defaults() => SettingsModel(
+        theme: "dark",
+        units: "metric",
+        crashSensitivity: "medium",
+        autoSOS: true,
+      );
 
   SettingsModel copyWith({
     String? theme,
     String? units,
     String? crashSensitivity,
     bool? autoSOS,
+    String? defaultMusicAppPackage,
     List<EmergencyContact>? emergencyContacts,
     Map<String, dynamic>? crashThresholds,
     DateTime? lastSyncedAt,
@@ -54,6 +57,7 @@ class SettingsModel {
       units: units ?? this.units,
       crashSensitivity: crashSensitivity ?? this.crashSensitivity,
       autoSOS: autoSOS ?? this.autoSOS,
+      defaultMusicAppPackage: defaultMusicAppPackage ?? this.defaultMusicAppPackage,
       emergencyContacts: emergencyContacts ?? this.emergencyContacts,
       crashThresholds: crashThresholds ?? this.crashThresholds,
       lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,

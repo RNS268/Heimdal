@@ -110,10 +110,10 @@ class _CrashOverlayState extends State<CrashOverlay>
   Widget _buildHeader() {
     return Container(
       padding: const EdgeInsets.all(16),
-      child: const Row(
+      child: Row(
         children: [
           Icon(Icons.warning, color: AppColors.error, size: 24),
-          SizedBox(width: 12),
+          const SizedBox(width: 12),
           Text(
             'EMERGENCY ALERT',
             style: TextStyle(
@@ -123,7 +123,7 @@ class _CrashOverlayState extends State<CrashOverlay>
               color: AppColors.primary,
             ),
           ),
-          Spacer(),
+          const Spacer(),
           Text(
             'HEIMDALL',
             style: TextStyle(
@@ -192,7 +192,7 @@ class _CrashOverlayState extends State<CrashOverlay>
                     width: 2,
                   ),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.car_crash,
                   size: 64,
                   color: AppColors.error,
@@ -208,7 +208,7 @@ class _CrashOverlayState extends State<CrashOverlay>
   Widget _buildCountdown() {
     return Column(
       children: [
-        const Text(
+        Text(
           'AUTOMATIC SOS IN',
           style: TextStyle(
             fontSize: 11,
@@ -232,8 +232,8 @@ class _CrashOverlayState extends State<CrashOverlay>
                 height: 1,
               ),
             ),
-            const Padding(
-              padding: EdgeInsets.only(bottom: 20),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 20),
               child: Text(
                 'SEC',
                 style: TextStyle(
@@ -265,11 +265,11 @@ class _CrashOverlayState extends State<CrashOverlay>
         children: [
           Row(
             children: [
-              const Icon(Icons.location_on, color: AppColors.primary, size: 20),
+              Icon(Icons.location_on, color: AppColors.primary, size: 20),
               const SizedBox(width: 8),
               Text(
                 'GPS: ${widget.latitude.toStringAsFixed(4)}° N, ${widget.longitude.toStringAsFixed(4)}° W',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
                   color: AppColors.onSurface,
@@ -280,7 +280,7 @@ class _CrashOverlayState extends State<CrashOverlay>
           const SizedBox(height: 12),
           Text(
             'Significant impact detected. Dispatching emergency services and notifying your emergency contacts in $_remainingSeconds seconds.',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               color: AppColors.onSurfaceVariant,
             ),
@@ -301,7 +301,7 @@ class _CrashOverlayState extends State<CrashOverlay>
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 32),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
+                gradient: LinearGradient(
                   colors: [AppColors.primary, AppColors.primaryContainer],
                 ),
                 borderRadius: BorderRadius.circular(16),
@@ -315,7 +315,7 @@ class _CrashOverlayState extends State<CrashOverlay>
               ),
               child: Column(
                 children: [
-                  const Text(
+                  Text(
                     "I'M OK",
                     style: TextStyle(
                       fontSize: 24,
@@ -349,7 +349,7 @@ class _CrashOverlayState extends State<CrashOverlay>
                   color: AppColors.outlineVariant.withValues(alpha: 0.3),
                 ),
               ),
-              child: const Center(
+              child: Center(
                 child: Text(
                   'CALL EMERGENCY SERVICES NOW',
                   style: TextStyle(

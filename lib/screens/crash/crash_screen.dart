@@ -4,10 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
-import '../../theme/app_colors.dart';
 import '../../services/crash_detection_service.dart';
 import '../../services/emergency_alert_service.dart';
 import '../../services/settings_service.dart';
+
+const MethodChannel _sosToneChannel = MethodChannel('com.heimdall.helmet/emergency_calls');
 
 // ─── Route helper ─────────────────────────────────────────────────────────────
 /// Call this from anywhere to take over the entire screen with CrashScreen.
@@ -57,11 +58,14 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
 
     _fetchLocation();
     _startCountdown();
+    _startSosTone();
+    HapticFeedback.vibrate();
   }
 
   @override
   void dispose() {
     _countdownTimer?.cancel();
+    _stopSosTone();
     _pulseController.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
@@ -103,11 +107,32 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
         return;
       }
       setState(() => _remaining--);
+      if (_remaining > 0) {
+        _startSosTone(); // Keep tone alive during countdown
+        HapticFeedback.vibrate(); // Intense haptic feedback
+      }
       if (_remaining <= 0) {
         timer.cancel();
         _triggerSOS();
       }
     });
+  }
+
+  void _startSosTone() {
+    if (!mounted || _sosSent || _isOk) return;
+    _invokeToneMethod('startSosTone');
+  }
+
+  void _stopSosTone() {
+    _invokeToneMethod('stopSosTone');
+  }
+
+  void _invokeToneMethod(String method) {
+    try {
+      _sosToneChannel.invokeMethod<bool>(method);
+    } on PlatformException catch (e) {
+      debugPrint('SOS tone platform error: ${e.message}');
+    }
   }
 
   // ─── SOS ──────────────────────────────────────────────────────────────────
@@ -122,25 +147,32 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
       return;
     }
     setState(() => _sosSent = true);
+    _stopSosTone();
 
     final alertService = ref.read(emergencyAlertServiceProvider);
+    final latitude = _latitude ?? 0.0;
+    final longitude = _longitude ?? 0.0;
 
     // 1. Send SMS to all contacts
-    if (_latitude != null && _longitude != null) {
-      await alertService.sendCrashAlerts(
-        latitude: _latitude!,
-        longitude: _longitude!,
-      );
-    }
+    await alertService.sendCrashAlerts(
+      latitude: latitude,
+      longitude: longitude,
+    );
 
-    // 2. Call first contact / 112
-    await alertService.callEmergencyContact();
+    // 2. Wait before calling the same emergency number
+    await Future.delayed(const Duration(seconds: 2));
+
+    await alertService.callEmergencyContact(
+      latitude: latitude,
+      longitude: longitude,
+    );
   }
 
   // ─── I'M OK ───────────────────────────────────────────────────────────────
 
   void _handleImOk() {
     _countdownTimer?.cancel();
+    _stopSosTone();
     setState(() => _isOk = true);
     ref.read(crashDetectionServiceProvider).cancelCrashAlert();
 
@@ -157,15 +189,23 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
       _awaitingManualSos = false;
       _sosSent = true;
     });
+    _stopSosTone();
 
     final alertService = ref.read(emergencyAlertServiceProvider);
-    if (_latitude != null && _longitude != null) {
-      await alertService.sendCrashAlerts(
-        latitude: _latitude!,
-        longitude: _longitude!,
-      );
-    }
-    await alertService.callEmergencyContact();
+    final latitude = _latitude ?? 0.0;
+    final longitude = _longitude ?? 0.0;
+
+    await alertService.sendCrashAlerts(
+      latitude: latitude,
+      longitude: longitude,
+    );
+
+    await Future.delayed(const Duration(seconds: 2));
+
+    await alertService.callEmergencyContact(
+      latitude: latitude,
+      longitude: longitude,
+    );
   }
 
   // ─── Build ────────────────────────────────────────────────────────────────
@@ -187,8 +227,8 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
                     child: _sosSent
                         ? _buildSOSSentState()
                         : _isOk
-                            ? _buildOkState()
-                            : _buildCountdownState(),
+                        ? _buildOkState()
+                        : _buildCountdownState(),
                   ),
                   if (!_sosSent && !_isOk) _buildBottomActions(),
                 ],
@@ -212,8 +252,9 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
               center: Alignment.center,
               radius: 1.2,
               colors: [
-                AppColors.error.withValues(
-                    alpha: 0.08 + _pulseController.value * 0.06),
+                Theme.of(context).colorScheme.error.withValues(
+                  alpha: 0.08 + _pulseController.value * 0.06,
+                ),
                 Colors.black,
               ],
             ),
@@ -234,28 +275,29 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
             animation: _pulseController,
             builder: (_, __) => Icon(
               Icons.warning_amber_rounded,
-              color: AppColors.error.withValues(
-                  alpha: 0.5 + _pulseController.value * 0.5),
+              color: Theme.of(context).colorScheme.error.withValues(
+                alpha: 0.5 + _pulseController.value * 0.5,
+              ),
               size: 24,
             ),
           ),
           const SizedBox(width: 10),
-          const Text(
+          Text(
             'EMERGENCY ALERT',
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w800,
               letterSpacing: 2,
-              color: AppColors.error,
+              color: Theme.of(context).colorScheme.error,
             ),
           ),
           const Spacer(),
-          const Text(
+          Text(
             'HEIMDALL',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w900,
-              color: AppColors.secondary,
+              color: Theme.of(context).colorScheme.secondary,
             ),
           ),
         ],
@@ -279,9 +321,18 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
           child: Stack(
             alignment: Alignment.center,
             children: [
-              CustomPaint(
-                size: const Size(160, 160),
-                painter: _ArcPainter(progress: progress),
+              Builder(
+                builder: (context) {
+                  final colorScheme = Theme.of(context).colorScheme;
+                  return CustomPaint(
+                    size: const Size(160, 160),
+                    painter: _ArcPainter(
+                      progress: progress,
+                      errorColor: colorScheme.error,
+                      warningColor: Colors.deepOrange,
+                    ),
+                  );
+                },
               ),
               Column(
                 mainAxisSize: MainAxisSize.min,
@@ -295,13 +346,13 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
                       height: 1,
                     ),
                   ),
-                  const Text(
+                  Text(
                     'SEC',
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
                       letterSpacing: 3,
-                      color: AppColors.error,
+                      color: Theme.of(context).colorScheme.error,
                     ),
                   ),
                 ],
@@ -310,13 +361,13 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
           ),
         ),
         const SizedBox(height: 8),
-        const Text(
+        Text(
           'AUTOMATIC SOS IN',
           style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w600,
             letterSpacing: 2,
-            color: AppColors.onSurfaceVariant,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
         ),
         const SizedBox(height: 28),
@@ -327,20 +378,30 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
             margin: const EdgeInsets.symmetric(horizontal: 24),
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: AppColors.tertiary.withValues(alpha: 0.12),
+              color: Theme.of(
+                context,
+              ).colorScheme.tertiary.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.tertiary.withValues(alpha: 0.3)),
+              border: Border.all(
+                color: Theme.of(
+                  context,
+                ).colorScheme.tertiary.withValues(alpha: 0.3),
+              ),
             ),
-            child: const Row(
+            child: Row(
               children: [
-                Icon(Icons.info_outline, color: AppColors.tertiary, size: 18),
-                SizedBox(width: 10),
+                Icon(
+                  Icons.info_outline,
+                  color: Theme.of(context).colorScheme.tertiary,
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     'Auto-SOS is off. Confirm manual SOS below if needed.',
                     style: TextStyle(
                       fontSize: 12,
-                      color: AppColors.onSurfaceVariant,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ),
@@ -371,10 +432,15 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
       margin: const EdgeInsets.symmetric(horizontal: 24),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: AppColors.surfaceVariant.withValues(alpha: 0.3),
+        color: Theme.of(
+          context,
+        ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(14),
-        border: const Border(
-          left: BorderSide(color: AppColors.error, width: 3),
+        border: Border(
+          left: BorderSide(
+            color: Theme.of(context).colorScheme.error,
+            width: 3,
+          ),
         ),
       ),
       child: Column(
@@ -382,36 +448,42 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
         children: [
           Row(
             children: [
-              const Icon(Icons.location_on, color: AppColors.primary, size: 18),
+              Icon(
+                Icons.location_on,
+                color: Theme.of(context).colorScheme.primary,
+                size: 18,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: _gpsLoading
-                    ? const Row(
+                    ? Row(
                         children: [
                           SizedBox(
                             width: 12,
                             height: 12,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: AppColors.primary,
+                              color: Theme.of(context).colorScheme.primary,
                             ),
                           ),
-                          SizedBox(width: 8),
+                          const SizedBox(width: 8),
                           Text(
                             'Acquiring GPS...',
                             style: TextStyle(
                               fontSize: 13,
-                              color: AppColors.onSurfaceVariant,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
                             ),
                           ),
                         ],
                       )
                     : Text(
                         gpsText,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
-                          color: AppColors.onSurface,
+                          color: Theme.of(context).colorScheme.onSurface,
                         ),
                       ),
               ),
@@ -422,16 +494,20 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
           const SizedBox(height: 10),
           Row(
             children: [
-              const Icon(Icons.people, color: AppColors.tertiary, size: 16),
+              Icon(
+                Icons.people,
+                color: Theme.of(context).colorScheme.tertiary,
+                size: 16,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   contacts.isEmpty
                       ? 'No contacts set — will call 112'
                       : 'Alerting: ${contacts.join(', ')}',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
-                    color: AppColors.onSurfaceVariant,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                 ),
               ),
@@ -453,28 +529,35 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
           height: 120,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: AppColors.error.withValues(alpha: 0.15),
-            border: Border.all(color: AppColors.error, width: 3),
+            color: Theme.of(context).colorScheme.error.withValues(alpha: 0.15),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.error,
+              width: 3,
+            ),
           ),
-          child: const Icon(Icons.cell_tower, color: AppColors.error, size: 56),
+          child: Icon(
+            Icons.cell_tower,
+            color: Theme.of(context).colorScheme.error,
+            size: 56,
+          ),
         ),
         const SizedBox(height: 28),
-        const Text(
+        Text(
           'SOS SENT',
           style: TextStyle(
             fontSize: 40,
             fontWeight: FontWeight.w900,
             letterSpacing: 4,
-            color: AppColors.error,
+            color: Theme.of(context).colorScheme.error,
           ),
         ),
         const SizedBox(height: 12),
-        const Text(
+        Text(
           'Emergency contacts notified.\nCall in progress.',
           textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: 16,
-            color: AppColors.onSurfaceVariant,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
             height: 1.5,
           ),
         ),
@@ -488,18 +571,20 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 20),
             decoration: BoxDecoration(
-              color: AppColors.surfaceVariant.withValues(alpha: 0.5),
+              color: Theme.of(
+                context,
+              ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: Colors.white12),
             ),
-            child: const Center(
+            child: Center(
               child: Text(
                 "I'M SAFE — CANCEL ALERT",
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 1.5,
-                  color: AppColors.onSurface,
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
             ),
@@ -512,23 +597,30 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
   // ─── OK State ─────────────────────────────────────────────────────────────
 
   Widget _buildOkState() {
-    return const Column(
+    return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Icon(Icons.check_circle_outline, color: AppColors.primary, size: 100),
-        SizedBox(height: 24),
+        Icon(
+          Icons.check_circle_outline,
+          color: Theme.of(context).colorScheme.primary,
+          size: 100,
+        ),
+        const SizedBox(height: 24),
         Text(
           "ALERT CANCELLED",
           style: TextStyle(
             fontSize: 28,
             fontWeight: FontWeight.w900,
-            color: AppColors.primary,
+            color: Theme.of(context).colorScheme.primary,
           ),
         ),
-        SizedBox(height: 12),
+        const SizedBox(height: 12),
         Text(
           'Returning to main screen...',
-          style: TextStyle(color: AppColors.onSurfaceVariant, fontSize: 14),
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+            fontSize: 14,
+          ),
         ),
       ],
     );
@@ -552,17 +644,20 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
-                      AppColors.primary
-                          .withValues(alpha: 0.85 + _pulseController.value * 0.15),
-                      AppColors.primaryContainer
-                          .withValues(alpha: 0.85 + _pulseController.value * 0.15),
+                      Theme.of(context).colorScheme.primary.withValues(
+                        alpha: 0.85 + _pulseController.value * 0.15,
+                      ),
+                      Theme.of(context).colorScheme.primaryContainer.withValues(
+                        alpha: 0.85 + _pulseController.value * 0.15,
+                      ),
                     ],
                   ),
                   borderRadius: BorderRadius.circular(18),
                   boxShadow: [
                     BoxShadow(
-                      color: AppColors.primary
-                          .withValues(alpha: 0.2 + _pulseController.value * 0.2),
+                      color: Theme.of(context).colorScheme.primary.withValues(
+                        alpha: 0.2 + _pulseController.value * 0.2,
+                      ),
                       blurRadius: 30,
                       spreadRadius: 4,
                     ),
@@ -602,20 +697,24 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 16),
               decoration: BoxDecoration(
-                color: AppColors.error.withValues(alpha: 0.12),
+                color: Theme.of(
+                  context,
+                ).colorScheme.error.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: AppColors.error.withValues(alpha: 0.3),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.error.withValues(alpha: 0.3),
                 ),
               ),
-              child: const Center(
+              child: Center(
                 child: Text(
                   'CALL EMERGENCY SERVICES NOW',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 1.5,
-                    color: AppColors.error,
+                    color: Theme.of(context).colorScheme.error,
                   ),
                 ),
               ),
@@ -629,7 +728,9 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 decoration: BoxDecoration(
-                  color: AppColors.error.withValues(alpha: 0.8),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.error.withValues(alpha: 0.8),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: const Center(
@@ -656,7 +757,13 @@ class _CrashScreenState extends ConsumerState<CrashScreen>
 
 class _ArcPainter extends CustomPainter {
   final double progress;
-  _ArcPainter({required this.progress});
+  final Color errorColor;
+  final Color warningColor;
+  _ArcPainter({
+    required this.progress,
+    required this.errorColor,
+    required this.warningColor,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -681,7 +788,7 @@ class _ArcPainter extends CustomPainter {
       sweepAngle,
       false,
       Paint()
-        ..color = progress > 0.4 ? AppColors.error : Colors.deepOrange
+        ..color = progress > 0.4 ? errorColor : warningColor
         ..style = PaintingStyle.stroke
         ..strokeWidth = 8
         ..strokeCap = StrokeCap.round,
@@ -689,7 +796,10 @@ class _ArcPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_ArcPainter old) => old.progress != progress;
+  bool shouldRepaint(_ArcPainter old) =>
+      old.progress != progress ||
+      old.errorColor != errorColor ||
+      old.warningColor != warningColor;
 }
 
 // ─── Pulsing Crash Icon ───────────────────────────────────────────────────────
@@ -714,12 +824,14 @@ class _PulsingCrashIconState extends State<_PulsingCrashIcon>
       vsync: this,
       duration: const Duration(milliseconds: 1800),
     )..repeat(reverse: true);
-    _scale = Tween<double>(begin: 0.93, end: 1.0).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
-    );
-    _ring = Tween<double>(begin: 1.0, end: 1.5).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.easeOut),
-    );
+    _scale = Tween<double>(
+      begin: 0.93,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
+    _ring = Tween<double>(
+      begin: 1.0,
+      end: 1.5,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
   }
 
   @override
@@ -743,7 +855,9 @@ class _PulsingCrashIconState extends State<_PulsingCrashIcon>
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: AppColors.error.withValues(alpha: 0.3),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.error.withValues(alpha: 0.3),
                   width: 2,
                 ),
               ),
@@ -756,13 +870,21 @@ class _PulsingCrashIconState extends State<_PulsingCrashIcon>
               height: 110,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: AppColors.error.withValues(alpha: 0.12),
+                color: Theme.of(
+                  context,
+                ).colorScheme.error.withValues(alpha: 0.12),
                 border: Border.all(
-                  color: AppColors.error.withValues(alpha: 0.5),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.error.withValues(alpha: 0.5),
                   width: 2,
                 ),
               ),
-              child: const Icon(Icons.car_crash, size: 52, color: AppColors.error),
+              child: Icon(
+                Icons.car_crash,
+                size: 52,
+                color: Theme.of(context).colorScheme.error,
+              ),
             ),
           ),
         ],

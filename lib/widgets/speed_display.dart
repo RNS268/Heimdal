@@ -13,7 +13,7 @@ class SpeedDisplay extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         ShaderMask(
-          shaderCallback: (bounds) => const LinearGradient(
+          shaderCallback: (bounds) => LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [AppColors.primary, AppColors.primaryContainer],
@@ -31,7 +31,7 @@ class SpeedDisplay extends StatelessWidget {
         ),
         Text(
           unit.toUpperCase(),
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w700,
             letterSpacing: 2.2,

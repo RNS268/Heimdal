@@ -124,6 +124,11 @@ class SettingsController extends StateNotifier<SettingsModel> {
     await _api.postJson("/settings/safety", {"auto_sos": value});
   }
 
+  Future<void> setDefaultMusicApp(String package) async {
+    state = state.copyWith(defaultMusicAppPackage: package);
+    await _persist();
+  }
+
   String normalizePhone(String phone) {
     final cleaned = phone.replaceAll(RegExp(r"[^\d+]"), "");
     if (cleaned.startsWith("+")) return cleaned;
@@ -179,6 +184,7 @@ class SettingsController extends StateNotifier<SettingsModel> {
     "units": s.units,
     "crashSensitivity": s.crashSensitivity,
     "autoSOS": s.autoSOS,
+    "defaultMusicAppPackage": s.defaultMusicAppPackage,
     "contacts": s.emergencyContacts.map((e) => e.toJson()).toList(),
     "crashThresholds": s.crashThresholds,
   };
@@ -189,6 +195,7 @@ class SettingsController extends StateNotifier<SettingsModel> {
       units: (map["units"] as String? ?? "metric"),
       crashSensitivity: (map["crashSensitivity"] as String? ?? "medium"),
       autoSOS: (map["autoSOS"] as bool? ?? true),
+      defaultMusicAppPackage: (map["defaultMusicAppPackage"] as String? ?? ""),
       emergencyContacts: ((map["contacts"] as List<dynamic>? ?? const [])
           .map((e) => EmergencyContact.fromJson(e as Map<String, dynamic>))
           .toList()),

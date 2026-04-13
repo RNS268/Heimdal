@@ -22,7 +22,7 @@ class CrashDetectorConfig {
   /// Drop stale impact state if no confirmation within this time.
   final Duration impactPipelineTimeout;
 
-  const CrashDetectorConfig({
+  CrashDetectorConfig({
     this.impactThresholdMps2 = 20.0,
     this.stillnessThresholdMps2 = 1.5,
     this.stillnessRequiredDuration = const Duration(milliseconds: 2500),
@@ -37,7 +37,7 @@ class CrashDetectorConfig {
 /// Does not fire on impact alone (reduces pothole / shake false positives).
 class CrashDetector {
   CrashDetector({CrashDetectorConfig? config})
-      : _config = config ?? const CrashDetectorConfig();
+      : _config = config ?? CrashDetectorConfig();
 
   final CrashDetectorConfig _config;
 

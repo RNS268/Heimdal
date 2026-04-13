@@ -96,7 +96,7 @@ class _GradientButtonState extends State<GradientButton>
                       ),
                     Text(
                       widget.label,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
                         color: AppColors.onPrimaryContainer,

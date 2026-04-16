@@ -186,6 +186,23 @@ class SimulationNotifier extends StateNotifier<SimulationState> {
     }
   }
 
+  // Manual indicator control
+  void setIndicatorLeft() {
+    state = state.copyWith(indicator: IndicatorState.left);
+  }
+
+  void setIndicatorRight() {
+    state = state.copyWith(indicator: IndicatorState.right);
+  }
+
+  void setIndicatorOff() {
+    state = state.copyWith(indicator: IndicatorState.none);
+  }
+
+  void toggleBrake() {
+    state = state.copyWith(isBraking: !state.isBraking);
+  }
+
   // ── Called every 200ms ──────────────────────
   void _tick200ms(Timer _) {
     _tick++;

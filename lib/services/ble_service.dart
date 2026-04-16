@@ -152,6 +152,29 @@ class BleService {
 
         var incomingBuffer = '';
 
+        void processTextPacket(String packet) {
+          final trimmedPacket = packet.trim();
+          if (trimmedPacket.isEmpty) return;
+
+          final csvOrJson = SensorData.tryParseTelemetryLine(trimmedPacket);
+          if (csvOrJson != null) {
+            _emitSensorSample(csvOrJson);
+            return;
+          }
+
+          final parsed = Parser.parse(trimmedPacket);
+          if (parsed != null) {
+            _dataController.add(parsed);
+            _sensorDataController.add(
+              SensorData(
+                ax: parsed.ax,
+                ay: parsed.ay,
+                az: parsed.az,
+              ),
+            );
+          }
+        }
+
         for (final service in services) {
           if (service.uuid.toString().toLowerCase() ==
               Constants.helmetServiceUuid.toLowerCase()) {
@@ -182,24 +205,14 @@ class BleService {
                       final newlineIndex = incomingBuffer.indexOf('\n');
                       final packet = incomingBuffer.substring(0, newlineIndex);
                       incomingBuffer = incomingBuffer.substring(newlineIndex + 1);
+                      processTextPacket(packet);
+                    }
 
-                      final csvOrJson = SensorData.tryParseTelemetryLine(packet);
-                      if (csvOrJson != null) {
-                        _emitSensorSample(csvOrJson);
-                        continue;
-                      }
-
-                      final parsed = Parser.parse(packet);
-                      if (parsed != null) {
-                        _dataController.add(parsed);
-                        _sensorDataController.add(
-                          SensorData(
-                            ax: parsed.ax,
-                            ay: parsed.ay,
-                            az: parsed.az,
-                          ),
-                        );
-                      }
+                    if (!incomingBuffer.contains('\n') &&
+                        incomingBuffer.startsWith('SP:') &&
+                        incomingBuffer.contains('DEV:')) {
+                      processTextPacket(incomingBuffer);
+                      incomingBuffer = '';
                     }
 
                     if (incomingBuffer.length > 512) {

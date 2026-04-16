@@ -16,7 +16,7 @@ abstract final class Constants {
 
   static const int maxReconnectAttempts = 5;
   static const int maxRawPacketBuffer = 50;
-  static const int bleMtu = 185;
+  static const int bleMtu = 517;
 
   // ============================================================================
   // Crash Detection Parameters (from ESP32 firmware)

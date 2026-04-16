@@ -1,11 +1,17 @@
+import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/ble_provider.dart';
 import '../../providers/simulation_provider.dart';
 import '../../models/sensor_data.dart';
+import '../../models/settings_model.dart';
+import '../../models/helmet_data.dart';
 import '../../processing/data_processor.dart';
 import '../../services/settings_service.dart';
+import '../../services/background_service.dart';
+import '../../utils/constants.dart';
 
 class RawDataScreen extends ConsumerStatefulWidget {
   const RawDataScreen({super.key});
@@ -15,6 +21,62 @@ class RawDataScreen extends ConsumerStatefulWidget {
 }
 
 class _RawDataScreenState extends ConsumerState<RawDataScreen> {
+  List<int> _backgroundRawData = [];
+  StreamSubscription<List<int>>? _backgroundDataSubscription;
+  final List<String> _debugLogs = [];
+  StreamSubscription<String>? _debugLogSubscription;
+  Map<String, double> _latestSensorData = {};
+  StreamSubscription<Map<String, double>>? _sensorDataSubscription;
+  List<Map<String, String>> _asciiData = [];
+  StreamSubscription<List<Map<String, String>>>? _asciiDataSubscription;
+
+  // Cached data for tabs
+  late AsyncValue<List<int>> _rawAsync;
+  late BleConnectionState? _bleState;
+  late SettingsModel _settings;
+  late SimulationState _sim;
+  late HelmetDataModel? _data;
+
+  @override
+  void initState() {
+    super.initState();
+    _backgroundDataSubscription = backgroundRawDataStream.listen((data) {
+      setState(() {
+        _backgroundRawData = data;
+      });
+    });
+    
+    _debugLogSubscription = debugLogStream.listen((log) {
+      setState(() {
+        _debugLogs.add('${DateTime.now().toIso8601String().substring(11, 19)} $log');
+        if (_debugLogs.length > 100) {
+          _debugLogs.removeAt(0); // Keep only last 100 logs
+        }
+      });
+    });
+    
+    _sensorDataSubscription = sensorDataStream.listen((data) {
+      setState(() {
+        _latestSensorData = data;
+      });
+    });
+
+    _asciiDataSubscription = asciiDataStream.listen((data) {
+      setState(() {
+        _asciiData = data;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _backgroundDataSubscription?.cancel();
+    _debugLogSubscription?.cancel();
+    _sensorDataSubscription?.cancel();
+    _asciiDataSubscription?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final helmetData = ref.watch(helmetDataStreamProvider);
@@ -24,6 +86,13 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
     final bleState = ref.watch(bleConnectionStateProvider);
     final settings = ref.watch(settingsProvider);
     final sim = ref.watch(simulationProvider);
+
+    // Cache values for tab methods
+    _rawAsync = rawAsync;
+    _bleState = bleState.valueOrNull;
+    _settings = settings;
+    _sim = sim;
+    _data = data;
     final sensor = sensorAsync.valueOrNull;
 
     // Effective sensor data: prefer simulation when active
@@ -55,134 +124,57 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
     final speed = isImperial ? effectiveSpeed * 0.621371 : effectiveSpeed;
     final speedUnit = isImperial ? 'mph' : 'km/h';
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildTopAppBar(),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 24,
-                ),
-                children: [
-                  _buildSequentialItem(
-              'BLE STATUS',
-              sim.isRunning ? 'SIMULATING (VIRTUAL)' : _bleStatusLabel(bleState.valueOrNull),
-              Icons.bluetooth,
-              color: sim.isRunning
-                  ? const Color(0xFF00BFA5)
-                  : _bleStatusColor(bleState.valueOrNull),
-            ),
-                  _buildSequentialItem(
-                    'ACCELERATION (AX / AY / AZ) m/s²',
-                    accel != null
-                        ? '${accel.ax.toStringAsFixed(2)} / ${accel.ay.toStringAsFixed(2)} / ${accel.az.toStringAsFixed(2)}'
-                        : '—',
-                    Icons.vibration,
-                  ),
-                  _buildSequentialItem(
-                    'TOTAL ‖A‖ (IMPACT BASE)',
-                    totalA != null ? '${totalA.toStringAsFixed(2)} m/s²' : '—',
-                    Icons.bolt,
-                  ),
-                  _buildSequentialItem(
-                    'GYRO (GX / GY / GZ) rad/s',
-                    accel != null
-                        ? '${accel.gx.toStringAsFixed(3)} / ${accel.gy.toStringAsFixed(3)} / ${accel.gz.toStringAsFixed(3)}'
-                        : '—',
-                    Icons.rotate_right,
-                  ),
-                  _buildSequentialItem(
-                    'TILT atan2(AX, AZ)',
-                    tiltAxAz != null ? '${tiltAxAz.toStringAsFixed(1)}°' : '—',
-                    Icons.rotate_right,
-                  ),
-                  _buildSequentialItem(
-                    'TILT (FROM VERTICAL)',
-                    accel != null
-                        ? '${accel.tiltDegreesFromVertical.toStringAsFixed(1)}°'
-                        : '—',
-                    Icons.screen_rotation,
-                  ),
-                  _buildSequentialItem(
-                    'MOTION (GRAVITY-REF)',
-                    motion ?? '—',
-                    Icons.directions_run,
-                  ),
-                  _buildSequentialItem(
-                    'MOTION (LINEAR-ONLY PIPELINE)',
-                    accel != null
-                        ? DataProcessor.motionStatusLinear(accel)
-                        : '—',
-                    Icons.linear_scale,
-                  ),
-                  _buildSequentialItem(
-                    'RAW BLE BYTES (LAST NOTIFY)',
-                    rawAsync.when(
-                      data: (bytes) => _hexPreview(bytes),
-                      loading: () => 'Waiting…',
-                      error: (e, _) => '—',
-                    ),
-                    Icons.memory,
-                  ),
-                  _buildSequentialItem(
-                    'SYSTEM TIME',
-                    '00:00',
-                    Icons.access_time,
-                    color: AppColors.secondary,
-                  ),
-                  _buildSequentialItem(
-                    'VELOCITY',
-                    '${speed.toStringAsFixed(1)} $speedUnit',
-                    Icons.speed,
-                  ),
-                  _buildSequentialItem(
-                    'BRAKE STATUS',
-                    effectiveBraking ? 'ACTIVE' : 'INACTIVE',
-                    Icons.radio_button_checked,
-                    color: effectiveBraking
-                        ? Colors.orange
-                        : AppColors.onSurfaceVariant.withValues(alpha: 0.5),
-                  ),
-                  _buildSequentialItem(
-                    'COLLISION STATUS',
-                    effectiveCollision ? 'COLLISION DETECTED' : 'NORMAL',
-                    Icons.security,
-                    color: effectiveCollision ? Colors.red : Colors.green,
-                  ),
-                  _buildSequentialItem(
-                    'LATITUDE',
-                    effectiveLat != 0
-                        ? '${effectiveLat.toStringAsFixed(4)}° N'
-                        : 'No GPS Signal',
-                    Icons.north_east,
-                  ),
-                  _buildSequentialItem(
-                    'LONGITUDE',
-                    effectiveLng != 0
-                        ? '${effectiveLng.toStringAsFixed(4)}° E'
-                        : 'No GPS Signal',
-                    Icons.south_east,
-                  ),
-                  const SizedBox(height: 32),
-                  Text(
-                    'DEBUG LOGS',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 2,
-                      color: AppColors.outline,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _buildLogsSection([]),
+    // Generate ASCII data from simulation when active, otherwise use background service
+    if (sim.isRunning) {
+      _asciiData = _generateAsciiDataFromSimulation(sim, isImperial);
+      // Update sensor data for graphs with simulation data
+      _latestSensorData = {
+        'ax': sim.ax,
+        'ay': sim.ay,
+        'az': sim.az,
+        'magnitude': sqrt(sim.ax * sim.ax + sim.ay * sim.ay + sim.az * sim.az),
+        'pitch': atan2(sim.ax, sim.az) * 180 / pi,
+        'speed': sim.speed,
+      };
+      // Add simulation status to logs
+      final simLog = '${DateTime.now().toIso8601String().substring(11, 19)} [SIM] Speed: ${sim.speed.toStringAsFixed(1)} km/h, Indicators: ${sim.indicator == IndicatorState.left ? 'LEFT' : sim.indicator == IndicatorState.right ? 'RIGHT' : 'OFF'}, Brake: ${sim.isBraking ? 'ON' : 'OFF'}';
+      if (!_debugLogs.contains(simLog)) {
+        _debugLogs.add(simLog);
+        if (_debugLogs.length > 100) {
+          _debugLogs.removeAt(0);
+        }
+      }
+    }
+
+    return DefaultTabController(
+      length: 3,
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _buildTopAppBar(),
+              TabBar(
+                tabs: const [
+                  Tab(text: 'ASCII'),
+                  Tab(text: 'GRAPHS'),
+                  Tab(text: 'LOGS'),
                 ],
+                labelColor: AppColors.primary,
+                unselectedLabelColor: AppColors.outline,
+                indicatorColor: AppColors.primary,
               ),
-            ),
-          ],
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    _buildAsciiTab(),
+                    _buildGraphsTab(),
+                    _buildLogsTab(),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -302,6 +294,321 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
     );
   }
 
+  Widget _buildAsciiTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'ASCII DATA FROM ESP32',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 2,
+              color: AppColors.outline,
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (_asciiData.isEmpty)
+            Center(
+              child: Text(
+                'No ASCII data received yet',
+                style: TextStyle(color: AppColors.outline),
+              ),
+            )
+          else
+            Container(
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.outline.withValues(alpha: 0.2)),
+              ),
+              child: Column(
+                children: [
+                  // Header row
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceVariant,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(12),
+                        topRight: Radius.circular(12),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: Text(
+                            'LABEL',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.onSurfaceVariant,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 3,
+                          child: Text(
+                            'VALUE',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.onSurfaceVariant,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Data rows
+                  ..._asciiData.map((item) => Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(
+                          color: AppColors.outline.withValues(alpha: 0.1),
+                          width: 1,
+                        ),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: Row(
+                            children: [
+                              Text(
+                                item['icon']!,
+                                style: const TextStyle(fontSize: 16),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  item['label']!,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.onSurface,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          flex: 3,
+                          child: Text(
+                            item['value']!,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: AppColors.primary,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGraphsTab() {
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      children: [
+        Text(
+          'SENSOR GRAPHS (AX, AY, AZ)',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 2,
+            color: AppColors.outline,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _buildSensorGraphs(_latestSensorData),
+      ],
+    );
+  }
+
+  Widget _buildSensorGraphs(Map<String, double> sensorData) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Real-time Accelerometer',
+                style: TextStyle(
+                  color: AppColors.primary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                'Last update: ${DateTime.now().toIso8601String().substring(11, 19)}',
+                style: TextStyle(
+                  color: AppColors.outline,
+                  fontSize: 10,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          _buildSensorBar('AX (X-axis)', sensorData['ax'] ?? 0, Colors.red),
+          const SizedBox(height: 12),
+          _buildSensorBar('AY (Y-axis)', sensorData['ay'] ?? 0, Colors.green),
+          const SizedBox(height: 12),
+          _buildSensorBar('AZ (Z-axis)', sensorData['az'] ?? 0, Colors.blue),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildSensorValue('Magnitude', sensorData['magnitude'] ?? 0),
+              _buildSensorValue('Pitch', sensorData['pitch'] ?? 0),
+              _buildSensorValue('Speed', sensorData['speed'] ?? 0),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSensorBar(String label, double value, Color color) {
+    // Normalize value for display (-20 to +20 range)
+    final normalizedValue = (value / 20.0).clamp(-1.0, 1.0);
+    final barWidth = (normalizedValue.abs() * 120).toDouble(); // Max 120px bar
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            SizedBox(
+              width: 80,
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: AppColors.onSurface,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Stack(
+                children: [
+                  // Background bar
+                  Container(
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  // Value bar
+                  Align(
+                    alignment: normalizedValue >= 0 ? Alignment.centerLeft : Alignment.centerRight,
+                    child: Container(
+                      width: barWidth,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                  // Center line
+                  Center(
+                    child: Container(
+                      width: 2,
+                      height: 20,
+                      color: Colors.white.withValues(alpha: 0.3),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: 60,
+              child: Text(
+                value.toStringAsFixed(2),
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSensorValue(String label, double value) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: AppColors.outline,
+          fontSize: 10,
+        ),
+        ),
+        Text(
+          value.toStringAsFixed(2),
+          style: TextStyle(
+            color: AppColors.onSurface,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            fontFamily: 'monospace',
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLogsTab() {
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      children: [
+        Text(
+          'DEBUG LOGS',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 2,
+            color: AppColors.outline,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _buildLogsSection(_debugLogs),
+      ],
+    );
+  }
+
   Widget _buildLogsSection(List<String> logs) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -337,4 +644,32 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
       ),
     );
   }
+
+  List<Map<String, String>> _generateAsciiDataFromSimulation(SimulationState sim, bool isImperial) {
+    final speed = isImperial ? sim.speed * 0.621371 : sim.speed;
+    final speedUnit = isImperial ? 'mph' : 'km/h';
+    
+    return [
+      {'label': 'Speed', 'value': '${speed.toStringAsFixed(2)} $speedUnit', 'icon': '🚗'},
+      {'label': 'Indicator', 'value': sim.indicator == IndicatorState.left ? 'LEFT' : sim.indicator == IndicatorState.right ? 'RIGHT' : 'OFF', 'icon': '🧭'},
+      {'label': 'Brake', 'value': sim.isBraking ? 'ON' : 'OFF', 'icon': '🛑'},
+      {'label': 'Crash Status', 'value': sim.isCrash ? 'CRASH' : 'NORMAL', 'icon': sim.isCrash ? '🚨' : '✅'},
+      {'label': 'Latitude', 'value': sim.latitude.toStringAsFixed(6), 'icon': '📍'},
+      {'label': 'Longitude', 'value': sim.longitude.toStringAsFixed(6), 'icon': '📍'},
+      {'label': 'Accel X', 'value': '${sim.ax.toStringAsFixed(2)} m/s²', 'icon': '📊'},
+      {'label': 'Accel Y', 'value': '${sim.ay.toStringAsFixed(2)} m/s²', 'icon': '📊'},
+      {'label': 'Accel Z', 'value': '${sim.az.toStringAsFixed(2)} m/s²', 'icon': '📊'},
+      {'label': 'Gyro X', 'value': '${sim.gx.toStringAsFixed(3)} rad/s', 'icon': '🔄'},
+      {'label': 'Gyro Y', 'value': '${sim.gy.toStringAsFixed(3)} rad/s', 'icon': '🔄'},
+      {'label': 'Gyro Z', 'value': '${sim.gz.toStringAsFixed(3)} rad/s', 'icon': '🔄'},
+      {'label': 'Lean Angle', 'value': '${sim.leanAngle.toStringAsFixed(1)}°', 'icon': '📐'},
+      {'label': 'Heart Rate', 'value': '${sim.heartRate} bpm', 'icon': '❤️'},
+      {'label': 'Battery', 'value': '${(sim.battery * 100).toStringAsFixed(0)}%', 'icon': '🔋'},
+      {'label': 'Temperature', 'value': '${sim.temperature.toStringAsFixed(1)}°C', 'icon': '🌡️'},
+      {'label': 'Altitude', 'value': '${sim.altitude.toStringAsFixed(0)} m', 'icon': '⛰️'},
+      {'label': 'Scenario', 'value': sim.scenario, 'icon': '🎭'},
+    ];
+  }
 }
+
+

@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:geolocator/geolocator.dart';
@@ -9,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import '../utils/constants.dart';
 
 /// ============================================================================
 /// HELMET SAFETY SERVICE - COMPLETE ALL-IN-ONE CORE
@@ -28,6 +28,83 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 final service = FlutterBackgroundService();
 
+/// Global stream for raw BLE data from background service
+final backgroundRawDataController = StreamController<List<int>>.broadcast();
+final backgroundRawDataStream = backgroundRawDataController.stream;
+
+/// Global debug logging stream
+final debugLogController = StreamController<String>.broadcast();
+final debugLogStream = debugLogController.stream;
+
+/// Parsed sensor data stream for graphs
+final sensorDataController = StreamController<Map<String, double>>.broadcast();
+final sensorDataStream = sensorDataController.stream;
+
+/// Parsed ASCII data stream for list display
+final asciiDataController = StreamController<List<Map<String, String>>>.broadcast();
+final asciiDataStream = asciiDataController.stream;
+
+/// Indicator states stream for UI indicators
+final indicatorStateController = StreamController<Map<String, bool>>.broadcast();
+final indicatorStateStream = indicatorStateController.stream;
+
+/// Static GPS helper for BLE manager
+Future<Position> _getPhoneGPS() async {
+  try {
+    return await Geolocator.getCurrentPosition(
+      timeLimit: const Duration(seconds: 10),
+    );
+  } catch (e) {
+    debugLogController.add('[GPS] Phone GPS failed: $e');
+    // Return default location
+    return Position(
+      longitude: 78.3996,
+      latitude: 17.4948,
+      timestamp: DateTime.now(),
+      accuracy: 0,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+    );
+  }
+}
+
+/// Sensor data model for the text protocol
+class SensorDataModel {
+  final double speed;
+  final String indicator;
+  final int brake;
+  final String crash;
+  final double latitude;
+  final double longitude;
+  final int clock;
+  final double ax;
+  final double ay;
+  final double az;
+  final double magnitude;
+  final double pitch;
+  final DateTime timestamp;
+
+  SensorDataModel({
+    required this.speed,
+    required this.indicator,
+    required this.brake,
+    required this.crash,
+    required this.latitude,
+    required this.longitude,
+    required this.clock,
+    required this.ax,
+    required this.ay,
+    required this.az,
+    required this.magnitude,
+    required this.pitch,
+    required this.timestamp,
+  });
+}
+
  
 
 /// Initialize the background service
@@ -40,9 +117,13 @@ Future<void> initializeBackgroundService() async {
         await Permission.locationAlways.request();
       }
       
+      // Request BLE permissions for background scanning
+      await Permission.bluetoothScan.request();
+      await Permission.bluetoothConnect.request();
+      
       // If location is denied, the foreground service WILL crash in Android 14.
       if (!await Permission.location.isGranted) {
-        print('❌ [SERVICE] Location permission denied. Cannot start background service safely.');
+        debugLogController.add('[SERVICE] Location permission denied. Cannot start background service safely.');
         return;
       }
       
@@ -80,9 +161,9 @@ Future<void> initializeBackgroundService() async {
     );
 
     service.startService();
-    print('✓ [SERVICE] Background service initialized');
+    debugLogController.add('[SERVICE] Background service initialized');
   } catch (e) {
-    print('❌ [SERVICE] Failed to initialize: $e');
+    debugLogController.add('[SERVICE] Failed to initialize: $e');
   }
 }
 
@@ -95,7 +176,7 @@ Future<bool> onIosBackground(ServiceInstance service) async {
 /// Main service entry point - runs continuously
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
-  print('🚀 [SERVICE] Helmet Safety Service Started');
+  debugLogController.add('[SERVICE] Helmet Safety Service Started');
 
   try {
     // Initialize location services
@@ -105,10 +186,39 @@ void onStart(ServiceInstance service) async {
     final detector = _CrashDetector();
     final sosManager = _SOSManager();
     final bleManager = _BLEManager();
-    // BLE scanning is intentionally not started from the headless background service.
-    // flutter_blue_plus requires an Android Activity to ask for permissions, and
-    // this service runs without an activity binding.
-    print('⚠️ [BLE] Background BLE scan disabled; start BLE scanning from the foreground UI instead.');
+    
+    // Set up BLE data callback to process sensor data
+    bleManager.startScanning(
+      onDataReceived: (accel, gyro) {
+        // Process crash detection
+        if (detector.analyze(accel, gyro)) {
+          debugLogController.add('[SERVICE] Crash detected! Triggering SOS...');
+          state.recordCrash();
+          sosManager.triggerSOS();
+        }
+      },
+      onError: (error) {
+        debugLogController.add('[BLE] Error: $error');
+      },
+      sosManager: sosManager,
+    );
+    
+    // Start BLE scanning for automatic helmet connection
+    debugLogController.add('[BLE] Starting background BLE scan for helmet devices...');
+    bleManager.startScanning(
+      onDataReceived: (accel, gyro) {
+        // Process crash detection
+        if (detector.analyze(accel, gyro)) {
+          debugLogController.add('[SERVICE] Crash detected! Triggering SOS...');
+          state.recordCrash();
+          sosManager.triggerSOS();
+        }
+      },
+      onError: (error) {
+        debugLogController.add('[BLE] Error: $error');
+      },
+      sosManager: sosManager,
+    );
 
     // Service loop - keeps everything running
     late Timer periodicTimer;
@@ -123,8 +233,8 @@ void onStart(ServiceInstance service) async {
       service.stopSelf();
     });
   } catch (e) {
-    print('❌ [SERVICE] Error during initialization: $e');
-    print('❌ [SERVICE] Stack: ${StackTrace.current}');
+    debugLogController.add('[SERVICE] Error during initialization: $e');
+    debugLogController.add('[SERVICE] Stack: ${StackTrace.current}');
   }
 }
 
@@ -159,7 +269,7 @@ class _CrashDetector {
       if (!_inCrashWindow) {
         _inCrashWindow = true;
         _crashWindowStart = DateTime.now();
-        print('⚠️ [DETECTOR] Entered crash window');
+        debugLogController.add('[DETECTOR] Entered crash window');
       }
     }
 
@@ -177,7 +287,7 @@ class _CrashDetector {
     // Exit crash window if values return to normal
     if (accelMag < 1.5 && gyroMag < 100) {
       if (_inCrashWindow) {
-        print('✓ [DETECTOR] Exited crash window (false alarm)');
+        debugLogController.add('[DETECTOR] Exited crash window (false alarm)');
       }
       _inCrashWindow = false;
     }
@@ -205,7 +315,13 @@ class _CrashDetector {
 /// ============================================================================
 
 class _BLEManager {
-  static const String helmetDeviceName = "ESP32_HELMET";
+  static const String serviceUuid = '12345678-1234-1234-1234-1234567890ab';
+  static const String characteristicUuid = '44444444-4444-4444-4444-444444444444';
+  
+  static const List<String> helmetDeviceNames = [
+    Constants.helmetDeviceName,
+    'ESP32_HELMET',
+  ];
 
   BluetoothDevice? _device;
   StreamSubscription? _scanSubscription;
@@ -217,22 +333,52 @@ class _BLEManager {
   static const int maxReconnectAttempts = 5;
   static const List<int> reconnectDelays = [3, 5, 10, 15, 30]; // seconds
 
+  // CLK monitoring for connection health
+  int _lastClockValue = -1;
+  DateTime _lastClockUpdate = DateTime.now();
+
   Function(List<double>, List<double>)? _onDataReceived;
   Function(String)? _onError;
+  _SOSManager? _sosManager;
 
   void startScanning({
     required Function(List<double>, List<double>) onDataReceived,
     required Function(String) onError,
+    _SOSManager? sosManager,
   }) {
     _onDataReceived = onDataReceived;
     _onError = onError;
+    _sosManager = sosManager;
 
-    _onError?.call('Background BLE scanning is disabled in the headless service.');
-    print('⚠️ [BLE] Background BLE scan called but disabled in headless service.');
+    // First check if we already have connected devices
+    _checkExistingConnections();
+
+    // Start scanning for helmet devices
+    _scan();
+  }
+
+  Future<void> _checkExistingConnections() async {
+    try {
+      final connectedDevices = FlutterBluePlus.connectedDevices;
+      for (final device in connectedDevices) {
+        final deviceName = device.platformName.isNotEmpty
+            ? device.platformName
+            : device.advName;
+        
+        if (helmetDeviceNames.contains(deviceName)) {
+          debugLogController.add('[BLE] Found already connected helmet: $deviceName');
+          // Try to discover services on this device
+          await _discoverServices(device);
+          return; // Found one, stop looking
+        }
+      }
+    } catch (e) {
+      debugLogController.add('[BLE] Error checking existing connections: $e');
+    }
   }
 
   Future<void> _scan() async {
-    print('🔍 [BLE] Starting device scan...');
+    debugLogController.add('[BLE] Starting device scan...');
 
     try {
       // ignore: unused_result
@@ -241,8 +387,12 @@ class _BLEManager {
       // ignore: unused_result
       _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
         for (var result in results) {
-          if (result.device.platformName == helmetDeviceName) {
-            print('✓ [BLE] Found helmet: ${result.device.platformName}');
+          final deviceName = result.device.platformName.isNotEmpty
+              ? result.device.platformName
+              : result.advertisementData.advName;
+
+          if (helmetDeviceNames.contains(deviceName)) {
+            debugLogController.add('[BLE] Found helmet: $deviceName');
 
             // Fire and forget the connection
             // ignore: unused_result
@@ -261,19 +411,19 @@ class _BLEManager {
 
   Future<void> _connect(BluetoothDevice device) async {
     try {
-      print('🔗 [BLE] Connecting to ${device.platformName}...');
+      debugLogController.add('[BLE] Connecting to ${device.platformName}...');
 
       _device = device;
       await device.connect(timeout: const Duration(seconds: 10));
       isConnected = true;
       reconnectAttempts = 0;
 
-      print('✓ [BLE] Connected');
+      debugLogController.add('[BLE] Connected');
 
       _connectionSubscription =
           device.connectionState.listen((state) async {
         if (state == BluetoothConnectionState.disconnected) {
-          print('✗ [BLE] Disconnected');
+          debugLogController.add('[BLE] Disconnected');
           isConnected = false;
           _reconnect();
         }
@@ -281,7 +431,7 @@ class _BLEManager {
 
       await _discoverServices(device);
     } catch (e) {
-      print('✗ [BLE] Connection failed: $e');
+      debugLogController.add('[BLE] Connection failed: $e');
       isConnected = false;
       _reconnect();
     }
@@ -289,63 +439,221 @@ class _BLEManager {
 
   Future<void> _discoverServices(BluetoothDevice device) async {
     try {
-      print('🔎 [BLE] Discovering services...');
+      debugLogController.add('[BLE] Discovering services...');
+
+      // Request MTU to match ESP32 firmware (185 bytes)
+      await device.requestMtu(185);
+      debugLogController.add('[BLE] MTU set to 185 bytes');
 
       final services = await device.discoverServices();
 
       for (var service in services) {
-        for (var characteristic in service.characteristics) {
-          if (characteristic.properties.notify) {
-            print('✓ [BLE] Found data characteristic');
+        if (service.uuid.toString() == serviceUuid) {
+          debugLogController.add('[BLE] Found helmet service: $serviceUuid');
+          
+          for (var characteristic in service.characteristics) {
+            if (characteristic.uuid.toString() == characteristicUuid) {
+              debugLogController.add('[BLE] Found data characteristic: $characteristicUuid');
 
-            await characteristic.setNotifyValue(true);
+              await characteristic.setNotifyValue(true);
 
-            _dataSubscription = characteristic.lastValueStream.listen((value) {
-              _parseData(value);
-            });
-            return;
+              _dataSubscription = characteristic.lastValueStream.listen((value) {
+                _parseData(value, _sosManager);
+                _displayRawData(value);
+              });
+              return;
+            }
           }
         }
       }
 
-      _onError?.call('Data characteristic not found');
+      _onError?.call('Helmet service or characteristic not found');
     } catch (e) {
-      print('✗ [BLE] Service discovery failed: $e');
+      debugLogController.add('[BLE] Service discovery failed: $e');
       _onError?.call('Service discovery error: $e');
     }
   }
 
-  void _parseData(List<int> data) {
+  void _parseData(List<int> data, _SOSManager? sosManager) async {
     try {
-      if (data.length < 24) return; // Need minimum data
+      // Convert bytes to string
+      final rawString = String.fromCharCodes(data).trim();
+      
+      // Parse the text protocol
+      final sensorData = await _parseTextProtocol(rawString);
+      if (sensorData != null) {
+        // Check for ASCII crash detection (C:ACCT)
+        if (sensorData.crash == 'ACCT') {
+          debugLogController.add('[CRASH] ASCII crash detected (C:ACCT)! Triggering SOS...');
+          sosManager?.triggerSOS();
+        }
 
-      // Parse as floats (4 bytes each)
-      final buffer = ByteData.sublistView(Uint8List.fromList(data));
+        // Send sensor data for graphs
+        sensorDataController.add({
+          'ax': sensorData.ax,
+          'ay': sensorData.ay,
+          'az': sensorData.az,
+          'magnitude': sensorData.magnitude,
+          'pitch': sensorData.pitch,
+          'speed': sensorData.speed,
+        });
 
-      final ax = buffer.getFloat32(0, Endian.little);
-      final ay = buffer.getFloat32(4, Endian.little);
-      final az = buffer.getFloat32(8, Endian.little);
+        // Send parsed ASCII data for list display
+        asciiDataController.add([
+          {'label': 'Speed', 'value': '${sensorData.speed.toStringAsFixed(2)} km/h', 'icon': '🚗'},
+          {'label': 'Indicator', 'value': sensorData.indicator, 'icon': '🧭'},
+          {'label': 'Brake', 'value': sensorData.brake == 1 ? 'ON' : 'OFF', 'icon': '🛑'},
+          {'label': 'Crash Status', 'value': sensorData.crash, 'icon': sensorData.crash == 'ACCT' ? '🚨' : '✅'},
+          {'label': 'Latitude', 'value': sensorData.latitude.toStringAsFixed(6), 'icon': '📍'},
+          {'label': 'Longitude', 'value': sensorData.longitude.toStringAsFixed(6), 'icon': '📍'},
+          {'label': 'Clock', 'value': sensorData.clock.toString(), 'icon': '⏰'},
+          {'label': 'Accel X', 'value': '${sensorData.ax.toStringAsFixed(2)} g', 'icon': '📊'},
+          {'label': 'Accel Y', 'value': '${sensorData.ay.toStringAsFixed(2)} g', 'icon': '📊'},
+          {'label': 'Accel Z', 'value': '${sensorData.az.toStringAsFixed(2)} g', 'icon': '📊'},
+          {'label': 'Magnitude', 'value': '${sensorData.magnitude.toStringAsFixed(2)} g', 'icon': '📈'},
+          {'label': 'Pitch', 'value': '${sensorData.pitch.toStringAsFixed(2)}°', 'icon': '📐'},
+          {'label': 'Timestamp', 'value': sensorData.timestamp.toIso8601String().substring(11, 19), 'icon': '🕐'},
+        ]);
 
-      final gx = buffer.getFloat32(12, Endian.little);
-      final gy = buffer.getFloat32(16, Endian.little);
-      final gz = buffer.getFloat32(20, Endian.little);
+        // Send indicator states for UI
+        indicatorStateController.add({
+          'leftIndicator': sensorData.indicator == 'L',
+          'rightIndicator': sensorData.indicator == 'R',
+          'brake': sensorData.brake == 1,
+        });
 
-      _onDataReceived?.call([ax, ay, az], [gx, gy, gz]);
+        // Check CLK for connection health
+        _monitorConnectionHealth(sensorData.clock);
+
+        // Legacy callback for crash detection (convert to old format)
+        _onDataReceived?.call([sensorData.ax, sensorData.ay, sensorData.az], [0, 0, 0]);
+      }
     } catch (e) {
-      // Silent fail - data format may vary
+      debugLogController.add('[ERROR] Failed to parse data: $e');
+    }
+  }
+
+  Future<SensorDataModel?> _parseTextProtocol(String data) async {
+    try {
+      // Handle missing comma after CLK value (ESP32 sends CLK:0DEV: together)
+      String normalizedData = data.replaceAll('DEV:', ',');
+      // If DEV: wasn't found, try the old format just in case
+      if (normalizedData == data) {
+        normalizedData = data.replaceAll('CLK:', 'CLK:0,DEV:');
+      }
+
+      debugLogController.add('[PARSE] Raw data: $data');
+      debugLogController.add('[PARSE] Normalized: $normalizedData');
+
+      // Parse key-value pairs
+      final pairs = <String, String>{};
+      final parts = normalizedData.split(',');
+      for (final part in parts) {
+        final kv = part.split(':');
+        if (kv.length == 2) {
+          pairs[kv[0].trim()] = kv[1].trim();
+        }
+      }
+
+      // Extract values with defaults
+      final speed = double.tryParse(pairs['SP'] ?? '0') ?? 0.0;
+      final indicator = pairs['I'] ?? 'N';  // Fixed: was '1' but should be 'I'
+      final brake = int.tryParse(pairs['B'] ?? '0') ?? 0;
+      final crash = pairs['C'] ?? 'NO';
+      var latitude = double.tryParse(pairs['LAT'] ?? '0') ?? 0.0;
+      var longitude = double.tryParse(pairs['LOG'] ?? '0') ?? 0.0;
+      
+      // GPS fallback: if ESP32 GPS is 0, use phone GPS
+      if (latitude == 0.0 && longitude == 0.0) {
+        try {
+          final position = await _getPhoneGPS();
+          latitude = position.latitude;
+          longitude = position.longitude;
+          debugLogController.add('[GPS] Using phone GPS: $latitude, $longitude');
+        } catch (e) {
+          debugLogController.add('[GPS] Phone GPS failed, keeping 0.0: $e');
+        }
+      }
+      
+      final clock = int.tryParse(pairs['CLK'] ?? '0') ?? 0;
+      final ax = double.tryParse(pairs['AX'] ?? '0') ?? 0.0;
+      final ay = double.tryParse(pairs['AY'] ?? '0') ?? 0.0;
+      final az = double.tryParse(pairs['AZ'] ?? '0') ?? 0.0;
+      final magnitude = double.tryParse(pairs['MAG'] ?? '0') ?? 0.0;
+      final pitch = double.tryParse(pairs['P'] ?? '0') ?? 0.0;
+
+      return SensorDataModel(
+        speed: speed,
+        indicator: indicator,
+        brake: brake,
+        crash: crash,
+        latitude: latitude,
+        longitude: longitude,
+        clock: clock,
+        ax: ax,
+        ay: ay,
+        az: az,
+        magnitude: magnitude,
+        pitch: pitch,
+        timestamp: DateTime.now(),
+      );
+    } catch (e) {
+      debugLogController.add('[PARSE ERROR] $e');
+      return null;
+    }
+  }
+
+  void _monitorConnectionHealth(int currentClock) {
+    final now = DateTime.now();
+    
+    // If clock changed, update timestamp
+    if (currentClock != _lastClockValue) {
+      _lastClockValue = currentClock;
+      _lastClockUpdate = now;
+      debugLogController.add('[HEALTH] CLK updated: $currentClock');
+      return;
+    }
+
+    // Check if clock hasn't changed for 3 seconds
+    final timeSinceLastUpdate = now.difference(_lastClockUpdate).inSeconds;
+    if (timeSinceLastUpdate >= 3) {
+      debugLogController.add('[HEALTH] CLK stale for ${timeSinceLastUpdate}s - connection lost');
+      _onError?.call('BLE connection lost - CLK not updating');
+      
+      // Trigger reconnection
+      if (isConnected) {
+        _reconnect();
+      }
+    }
+  }
+
+  void _displayRawData(List<int> data) {
+    try {
+      // Send raw data to UI stream
+      backgroundRawDataController.add(data);
+      
+      // Log to debug stream instead of print
+      final hexData = data.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(' ');
+      final asciiData = String.fromCharCodes(data.where((byte) => byte >= 32 && byte <= 126));
+      
+      debugLogController.add('[RAW DATA] ${data.length} bytes received');
+      debugLogController.add('[HEX] $hexData');
+      debugLogController.add('[ASCII] $asciiData');
+    } catch (e) {
+      debugLogController.add('[RAW DATA ERROR] $e');
     }
   }
 
   Future<void> _reconnect() async {
     if (reconnectAttempts >= maxReconnectAttempts) {
-      print('✗ [BLE] Max reconnect attempts reached');
+      debugLogController.add('✗ [BLE] Max reconnect attempts reached');
       _scan();
       reconnectAttempts = 0;
       return;
     }
 
     final delay = reconnectDelays[reconnectAttempts];
-    print(
+    debugLogController.add(
         '⏳ [BLE] Reconnecting in ${delay}s (attempt ${reconnectAttempts + 1}/$maxReconnectAttempts)');
 
     reconnectAttempts++;
@@ -384,7 +692,7 @@ class _SOSManager {
     if (_lastSOSTime != null) {
       final elapsed = DateTime.now().difference(_lastSOSTime!);
       if (elapsed.inMinutes < cooldownMinutes) {
-        print(
+        debugLogController.add(
             '⏱️ [SOS] In cooldown. Next SOS available in ${cooldownMinutes - elapsed.inMinutes}m');
         return;
       }
@@ -393,7 +701,7 @@ class _SOSManager {
     _lastSOSTime = DateTime.now();
     sosCount++;
 
-    print('🚨 [SOS] Countdown started (${countdownSeconds}s)');
+    debugLogController.add('🚨 [SOS] Countdown started (${countdownSeconds}s)');
     _countdownActive = true;
 
     bool cancelled = false;
@@ -403,18 +711,18 @@ class _SOSManager {
       await Future.delayed(const Duration(seconds: 1));
 
       if (!_countdownActive) {
-        print('✓ [SOS] Cancelled by user');
+        debugLogController.add('✓ [SOS] Cancelled by user');
         cancelled = true;
         break;
       }
 
-      print('⏳ [SOS] ${i}s remaining...');
+      debugLogController.add('⏳ [SOS] ${i}s remaining...');
     }
 
     _countdownActive = false;
 
     if (!cancelled) {
-      print('📤 [SOS] Sending emergency alerts...');
+      debugLogController.add('📤 [SOS] Sending emergency alerts...');
       await _sendSOS();
     }
   }
@@ -434,9 +742,9 @@ class _SOSManager {
       // Also attempt native SMS
       await _sendViaNativeSMS(message);
 
-      print('✓ [SOS] Emergency alerts sent');
+      debugLogController.add('✓ [SOS] Emergency alerts sent');
     } catch (e) {
-      print('✗ [SOS] Failed to send: $e');
+      debugLogController.add('✗ [SOS] Failed to send: $e');
       // Retry in 30 seconds
       await Future.delayed(const Duration(seconds: 30));
       _sendSOS();
@@ -449,7 +757,7 @@ class _SOSManager {
         timeLimit: const Duration(seconds: 10),
       );
     } catch (e) {
-      print('⚠️ [GPS] Failed: $e');
+      debugLogController.add('⚠️ [GPS] Failed: $e');
       // Return default location
       return Position(
         longitude: 78.3996,
@@ -475,7 +783,7 @@ class _SOSManager {
       const String emergencyTo = "+91XXXXXXXXXX";
 
       if (twilioSid == "YOUR_TWILIO_SID") {
-        print('⚠️ [TWILIO] Not configured - skipping');
+        debugLogController.add('⚠️ [TWILIO] Not configured - skipping');
         return;
       }
 
@@ -496,12 +804,12 @@ class _SOSManager {
       ).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 201) {
-        print('✓ [TWILIO] SMS sent successfully');
+        debugLogController.add('✓ [TWILIO] SMS sent successfully');
       } else {
-        print('✗ [TWILIO] Failed: ${response.statusCode}');
+        debugLogController.add('✗ [TWILIO] Failed: ${response.statusCode}');
       }
     } catch (e) {
-      print('✗ [TWILIO] Error: $e');
+      debugLogController.add('✗ [TWILIO] Error: $e');
     }
   }
 
@@ -509,9 +817,9 @@ class _SOSManager {
     try {
       // Native SMS would require platform channel
       // For now, just log
-      print('📝 [SMS] (Requires platform channel): $message');
+      debugLogController.add('📝 [SMS] (Requires platform channel): $message');
     } catch (e) {
-      print('✗ [SMS] Error: $e');
+      debugLogController.add('✗ [SMS] Error: $e');
     }
   }
 
@@ -553,13 +861,13 @@ Future<void> _initializeLocation() async {
 
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
-      print('⚠️ [GPS] Permission denied');
+      debugLogController.add('⚠️ [GPS] Permission denied');
       return;
     }
 
-    print('✓ [GPS] Permission granted');
+    debugLogController.add('✓ [GPS] Permission granted');
   } catch (e) {
-    print('✗ [GPS] Init failed: $e');
+    debugLogController.add('✗ [GPS] Init failed: $e');
   }
 }
 

@@ -8,8 +8,9 @@ import '../../widgets/speed_display.dart';
 import '../../widgets/indicator_arrow.dart';
 import '../../providers/ble_provider.dart';
 import '../../providers/simulation_provider.dart';
-import '../../models/helmet_data.dart';
 import '../../providers/navigation_provider.dart';
+import '../../models/helmet_data.dart';
+import '../../services/background_service.dart';
 import '../../services/settings_service.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -26,6 +27,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final helmetData = ref.watch(helmetDataStreamProvider);
     final settings = ref.watch(settingsProvider);
     final sim = ref.watch(simulationProvider);
+    final indicatorState = ref.watch(StreamProvider((ref) => indicatorStateStream));
     final colorScheme = Theme.of(context).colorScheme;
 
     // Merge: prefer simulation data when it's running
@@ -73,7 +75,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             Theme.of(context).colorScheme.secondary,
                           ),
                         const SizedBox(height: 16),
-                        _buildIndicatorsAndSpeed(effectiveData, settings.units == 'imperial'),
+                        _buildIndicatorsAndSpeed(effectiveData, settings.units == 'imperial', indicatorState.valueOrNull, sim),
                         const SizedBox(height: 32),
                         _buildSecondaryTelemetry(effectiveData),
                         const SizedBox(height: 24),
@@ -194,13 +196,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Widget _buildIndicatorsAndSpeed(HelmetDataModel? data, bool isImperial) {
+  Widget _buildIndicatorsAndSpeed(HelmetDataModel? data, bool isImperial, Map<String, bool>? indicatorState, SimulationState sim) {
     final rawSpeed = data?.speed ?? 0.0;
     final speed = isImperial ? rawSpeed * 0.621371 : rawSpeed;
     final unit = isImperial ? 'mph' : 'km/h';
-    final isTurningLeft = data?.isTurningLeft ?? false;
-    final isTurningRight = data?.isTurningRight ?? false;
-    final isBraking = data?.isBraking ?? false;
+    
+    // Priority: Simulation > ASCII > Helmet Data
+    bool isTurningLeft, isTurningRight, isBraking;
+    
+    if (sim.isRunning) {
+      // Use simulation indicator state
+      isTurningLeft = sim.indicator == IndicatorState.left;
+      isTurningRight = sim.indicator == IndicatorState.right;
+      isBraking = sim.isBraking;
+    } else if (indicatorState != null) {
+      // Use ASCII indicator state from background service
+      isTurningLeft = indicatorState['leftIndicator'] ?? false;
+      isTurningRight = indicatorState['rightIndicator'] ?? false;
+      isBraking = indicatorState['brake'] ?? false;
+    } else {
+      // Fall back to helmet data
+      isTurningLeft = data?.isTurningLeft ?? false;
+      isTurningRight = data?.isTurningRight ?? false;
+      isBraking = data?.isBraking ?? false;
+    }
 
     return Column(
       children: [

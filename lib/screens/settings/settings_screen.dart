@@ -470,7 +470,7 @@ class SettingsScreen extends ConsumerWidget {
                   ],
                 ),
               ),
-              if (sim.isRunning) ..._buildSimLiveReadings(sim),
+              if (sim.isRunning) ..._buildSimLiveReadings(sim, simNotifier),
             ],
           ),
         ),
@@ -478,7 +478,7 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  List<Widget> _buildSimLiveReadings(SimulationState sim) {
+  List<Widget> _buildSimLiveReadings(SimulationState sim, dynamic simNotifier) {
     return [
       const Divider(color: _outlineVariant, height: 1, thickness: 0.5),
       Padding(
@@ -531,6 +531,63 @@ class SettingsScreen extends ConsumerWidget {
           ],
         ),
       ),
+      const Divider(color: _outlineVariant, height: 1, thickness: 0.5),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'MANUAL CONTROLS',
+              style: TextStyle(
+                color: _onSurfaceVariant,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _controlButton(
+                    'LEFT',
+                    Icons.arrow_back,
+                    sim.indicator == IndicatorState.left,
+                    () => simNotifier.setIndicatorLeft(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _controlButton(
+                    'OFF',
+                    Icons.stop,
+                    sim.indicator == IndicatorState.none,
+                    () => simNotifier.setIndicatorOff(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _controlButton(
+                    'RIGHT',
+                    Icons.arrow_forward,
+                    sim.indicator == IndicatorState.right,
+                    () => simNotifier.setIndicatorRight(),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _controlButton(
+              sim.isBraking ? 'STOP BRAKE' : 'APPLY BRAKE',
+              sim.isBraking ? Icons.stop_circle : Icons.warning,
+              sim.isBraking,
+              () => simNotifier.toggleBrake(),
+              fullWidth: true,
+            ),
+          ],
+        ),
+      ),
     ];
   }
 
@@ -561,6 +618,43 @@ class SettingsScreen extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _controlButton(String label, IconData icon, bool isActive, VoidCallback onTap, {bool fullWidth = false}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: fullWidth ? double.infinity : null,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: isActive ? _primary.withValues(alpha: 0.15) : _surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isActive ? _primary.withValues(alpha: 0.4) : _outlineVariant.withValues(alpha: 0.2),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: fullWidth ? MainAxisSize.max : MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: isActive ? _primary : _onSurfaceVariant,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: isActive ? _primary : _onSurfaceVariant,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

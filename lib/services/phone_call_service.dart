@@ -1,9 +1,19 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 /// Platform channel for making emergency phone calls on Android/iOS
 class PhoneCallService {
   static const platform = MethodChannel('com.heimdall.helmet/emergency_calls');
+
+  Future<bool> _requestCallPermission() async {
+    final status = await Permission.phone.request();
+    if (status.isGranted) {
+      return true;
+    }
+    print('✗ [CALL] CALL_PHONE permission denied');
+    return false;
+  }
 
   /// Make an emergency phone call
   /// Returns true if call was initiated successfully
@@ -15,6 +25,10 @@ class PhoneCallService {
   }) async {
     try {
       print('📞 [CALL] Initiating emergency call to $contactName ($phoneNumber)');
+
+      if (!await _requestCallPermission()) {
+        return false;
+      }
       
       final result = await platform.invokeMethod<bool>(
         'makeEmergencyCall',

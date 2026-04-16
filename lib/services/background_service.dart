@@ -84,6 +84,9 @@ class SensorDataModel {
   final double ax;
   final double ay;
   final double az;
+  final double gx;
+  final double gy;
+  final double gz;
   final double magnitude;
   final double pitch;
   final DateTime timestamp;
@@ -99,6 +102,9 @@ class SensorDataModel {
     required this.ax,
     required this.ay,
     required this.az,
+    this.gx = 0.0,
+    this.gy = 0.0,
+    this.gz = 0.0,
     required this.magnitude,
     required this.pitch,
     required this.timestamp,
@@ -148,11 +154,15 @@ Future<void> initializeBackgroundService() async {
       androidConfiguration: AndroidConfiguration(
         onStart: onStart,
         isForegroundMode: true,
-        autoStart: true,
+        // Do not auto-start the BLE background worker during normal app launch.
+        // The foreground UI owns the helmet connection by default; background
+        // monitoring should only start when explicitly requested.
+        autoStart: false,
         autoStartOnBoot: true,
         notificationChannelId: 'helmet_safety_channel',
         initialNotificationTitle: 'Helmet Safety Active',
         initialNotificationContent: 'Monitoring for crashes...',
+        foregroundServiceNotificationId: 888,
       ),
       iosConfiguration: IosConfiguration(
         onForeground: onStart,
@@ -160,8 +170,7 @@ Future<void> initializeBackgroundService() async {
       ),
     );
 
-    service.startService();
-    debugLogController.add('[SERVICE] Background service initialized');
+    debugLogController.add('[SERVICE] Background service configured');
   } catch (e) {
     debugLogController.add('[SERVICE] Failed to initialize: $e');
   }
@@ -187,24 +196,8 @@ void onStart(ServiceInstance service) async {
     final sosManager = _SOSManager();
     final bleManager = _BLEManager();
     
-    // Set up BLE data callback to process sensor data
-    bleManager.startScanning(
-      onDataReceived: (accel, gyro) {
-        // Process crash detection
-        if (detector.analyze(accel, gyro)) {
-          debugLogController.add('[SERVICE] Crash detected! Triggering SOS...');
-          state.recordCrash();
-          sosManager.triggerSOS();
-        }
-      },
-      onError: (error) {
-        debugLogController.add('[BLE] Error: $error');
-      },
-      sosManager: sosManager,
-    );
-    
     // Start BLE scanning for automatic helmet connection
-    debugLogController.add('[BLE] Starting background BLE scan for helmet devices...');
+
     bleManager.startScanning(
       onDataReceived: (accel, gyro) {
         // Process crash detection
@@ -381,18 +374,19 @@ class _BLEManager {
     debugLogController.add('[BLE] Starting device scan...');
 
     try {
-      // ignore: unused_result
-      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 8));
-
-      // ignore: unused_result
+      _scanSubscription?.cancel();
       _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
         for (var result in results) {
           final deviceName = result.device.platformName.isNotEmpty
               ? result.device.platformName
               : result.advertisementData.advName;
 
-          if (helmetDeviceNames.contains(deviceName)) {
-            debugLogController.add('[BLE] Found helmet: $deviceName');
+          final hasService = result.advertisementData.serviceUuids
+              .map((u) => u.toString().toLowerCase())
+              .contains(serviceUuid.toLowerCase());
+
+          if (helmetDeviceNames.contains(deviceName) || hasService) {
+            debugLogController.add('[BLE] Found helmet: $deviceName (ServiceMatch: $hasService)');
 
             // Fire and forget the connection
             // ignore: unused_result
@@ -402,6 +396,15 @@ class _BLEManager {
           }
         }
       });
+
+      // ignore: unused_result
+      await FlutterBluePlus.startScan(
+        timeout: const Duration(seconds: 8),
+        withServices: [Guid(serviceUuid)],
+        withNames: helmetDeviceNames.toList(),
+        androidScanMode: AndroidScanMode.lowLatency,
+        androidUsesFineLocation: true,
+      );
     } catch (e) {
       _onError?.call('Scan failed: $e');
       await Future.delayed(const Duration(seconds: 5));
@@ -493,6 +496,9 @@ class _BLEManager {
           'ax': sensorData.ax,
           'ay': sensorData.ay,
           'az': sensorData.az,
+          'gx': sensorData.gx,
+          'gy': sensorData.gy,
+          'gz': sensorData.gz,
           'magnitude': sensorData.magnitude,
           'pitch': sensorData.pitch,
           'speed': sensorData.speed,
@@ -510,6 +516,9 @@ class _BLEManager {
           {'label': 'Accel X', 'value': '${sensorData.ax.toStringAsFixed(2)} g', 'icon': '📊'},
           {'label': 'Accel Y', 'value': '${sensorData.ay.toStringAsFixed(2)} g', 'icon': '📊'},
           {'label': 'Accel Z', 'value': '${sensorData.az.toStringAsFixed(2)} g', 'icon': '📊'},
+          {'label': 'Gyro X', 'value': '${sensorData.gx.toStringAsFixed(3)} rad/s', 'icon': '🔄'},
+          {'label': 'Gyro Y', 'value': '${sensorData.gy.toStringAsFixed(3)} rad/s', 'icon': '🔄'},
+          {'label': 'Gyro Z', 'value': '${sensorData.gz.toStringAsFixed(3)} rad/s', 'icon': '🔄'},
           {'label': 'Magnitude', 'value': '${sensorData.magnitude.toStringAsFixed(2)} g', 'icon': '📈'},
           {'label': 'Pitch', 'value': '${sensorData.pitch.toStringAsFixed(2)}°', 'icon': '📐'},
           {'label': 'Timestamp', 'value': sensorData.timestamp.toIso8601String().substring(11, 19), 'icon': '🕐'},
@@ -576,11 +585,39 @@ class _BLEManager {
       }
       
       final clock = int.tryParse(pairs['CLK'] ?? '0') ?? 0;
-      final ax = double.tryParse(pairs['AX'] ?? '0') ?? 0.0;
-      final ay = double.tryParse(pairs['AY'] ?? '0') ?? 0.0;
-      final az = double.tryParse(pairs['AZ'] ?? '0') ?? 0.0;
-      final magnitude = double.tryParse(pairs['MAG'] ?? '0') ?? 0.0;
-      final pitch = double.tryParse(pairs['P'] ?? '0') ?? 0.0;
+      
+      // Parse DEV data for sensor values
+      double ax = 0.0, ay = 0.0, az = 9.81;
+      double gx = 0.0, gy = 0.0, gz = 0.0;
+      final devData = pairs['DEV'] ?? '';
+      if (devData.isNotEmpty) {
+        final devParts = devData.split(',');
+        for (final part in devParts) {
+          final kv = part.split(':');
+          if (kv.length != 2) continue;
+          
+          final key = kv[0].trim().toUpperCase();
+          final value = double.tryParse(kv[1].trim()) ?? 0.0;
+          
+          switch (key) {
+            case 'AX':
+              ax = value;
+            case 'AY':
+              ay = value;
+            case 'AZ':
+              az = value;
+            case 'GX':
+              gx = value;
+            case 'GY':
+              gy = value;
+            case 'GZ':
+              gz = value;
+          }
+        }
+      }
+      
+      final magnitude = sqrt(ax * ax + ay * ay + az * az);
+      final pitch = atan2(ax, sqrt(ay * ay + az * az)) * 180 / pi;
 
       return SensorDataModel(
         speed: speed,
@@ -593,6 +630,9 @@ class _BLEManager {
         ax: ax,
         ay: ay,
         az: az,
+        gx: gx,
+        gy: gy,
+        gz: gz,
         magnitude: magnitude,
         pitch: pitch,
         timestamp: DateTime.now(),

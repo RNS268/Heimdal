@@ -3,7 +3,7 @@ abstract final class Constants {
   // ============================================================================
   // BLE Configuration (from ESP32 firmware)
   // ============================================================================
-  static const String helmetDeviceName = 'HelmetSensor';
+  static const String helmetDeviceName = 'Helmet';
   static const String helmetServiceUuid =
       '12345678-1234-1234-1234-1234567890ab';
   static const String helmetCharacteristicUuid =

@@ -17,6 +17,9 @@ class HelmetDataModel {
   final double ax;
   final double ay;
   final double az;
+  final double gx;
+  final double gy;
+  final double gz;
   final String rawDevData;
   final DateTime timestamp;
 
@@ -31,6 +34,9 @@ class HelmetDataModel {
     required this.ax,
     required this.ay,
     required this.az,
+    this.gx = 0.0,
+    this.gy = 0.0,
+    this.gz = 0.0,
     required this.rawDevData,
     required this.timestamp,
   });

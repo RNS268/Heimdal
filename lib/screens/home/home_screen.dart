@@ -12,6 +12,7 @@ import '../../providers/navigation_provider.dart';
 import '../../models/helmet_data.dart';
 import '../../services/background_service.dart';
 import '../../services/settings_service.dart';
+import '../../utils/constants.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -27,7 +28,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final helmetData = ref.watch(helmetDataStreamProvider);
     final settings = ref.watch(settingsProvider);
     final sim = ref.watch(simulationProvider);
-    final indicatorState = ref.watch(StreamProvider((ref) => indicatorStateStream));
+    final indicatorState = ref.watch(
+      StreamProvider((ref) => indicatorStateStream),
+    );
     final colorScheme = Theme.of(context).colorScheme;
 
     // Merge: prefer simulation data when it's running
@@ -75,13 +78,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             Theme.of(context).colorScheme.secondary,
                           ),
                         const SizedBox(height: 16),
-                        _buildIndicatorsAndSpeed(effectiveData, settings.units == 'imperial', indicatorState.valueOrNull, sim),
+                        _buildIndicatorsAndSpeed(
+                          effectiveData,
+                          settings.units == 'imperial',
+                          indicatorState.valueOrNull,
+                          sim,
+                        ),
                         const SizedBox(height: 32),
                         _buildSecondaryTelemetry(effectiveData),
                         const SizedBox(height: 24),
                         _buildConnectedDevices(connectionState.valueOrNull),
                         const SizedBox(height: 24),
-                        _buildRideAnalytics(effectiveData, settings.units == 'imperial', sim),
+                        _buildRideAnalytics(
+                          effectiveData,
+                          settings.units == 'imperial',
+                          sim,
+                        ),
                         const SizedBox(height: 24),
                       ],
                     ),
@@ -134,15 +146,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     simRunning
                         ? Icons.science
                         : (btOff
-                            ? Icons.bluetooth_disabled
-                            : (isConnected
-                                ? Icons.bluetooth_connected
-                                : Icons.bluetooth_disabled)),
+                              ? Icons.bluetooth_disabled
+                              : (isConnected
+                                    ? Icons.bluetooth_connected
+                                    : Icons.bluetooth_disabled)),
                     color: simRunning
                         ? const Color(0xFF00BFA5)
-                        : (btOff
-                            ? colorScheme.error
-                            : colorScheme.secondary),
+                        : (btOff ? colorScheme.error : colorScheme.secondary),
                     size: 20,
                   ),
                   const SizedBox(width: 8),
@@ -150,17 +160,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     simRunning
                         ? 'SIMULATING'
                         : (btOff
-                            ? 'BLUETOOTH OFF'
-                            : (isConnected ? 'LINKED' : 'DISCONNECTED')),
+                              ? 'BLUETOOTH OFF'
+                              : (isConnected ? 'LINKED' : 'DISCONNECTED')),
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                       letterSpacing: 2,
                       color: simRunning
                           ? const Color(0xFF00BFA5)
-                          : (btOff
-                              ? colorScheme.error
-                              : colorScheme.secondary),
+                          : (btOff ? colorScheme.error : colorScheme.secondary),
                     ),
                   ),
                 ],
@@ -196,14 +204,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Widget _buildIndicatorsAndSpeed(HelmetDataModel? data, bool isImperial, Map<String, bool>? indicatorState, SimulationState sim) {
+  Widget _buildIndicatorsAndSpeed(
+    HelmetDataModel? data,
+    bool isImperial,
+    Map<String, bool>? indicatorState,
+    SimulationState sim,
+  ) {
     final rawSpeed = data?.speed ?? 0.0;
     final speed = isImperial ? rawSpeed * 0.621371 : rawSpeed;
     final unit = isImperial ? 'mph' : 'km/h';
-    
+
     // Priority: Simulation > ASCII > Helmet Data
     bool isTurningLeft, isTurningRight, isBraking;
-    
+
     if (sim.isRunning) {
       // Use simulation indicator state
       isTurningLeft = sim.indicator == IndicatorState.left;
@@ -482,11 +495,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Widget _buildRideAnalytics(HelmetDataModel? data, bool isImperial, SimulationState sim) {
+  Widget _buildRideAnalytics(
+    HelmetDataModel? data,
+    bool isImperial,
+    SimulationState sim,
+  ) {
     final double rawDist = sim.isRunning
         ? 0.42 // Placeholder for mock distance in sim
         : 0.0;
-    final double rawAvg = sim.isRunning ? sim.speed * 0.9 : (data?.speed ?? 0.0);
+    final double rawAvg = sim.isRunning
+        ? sim.speed * 0.9
+        : (data?.speed ?? 0.0);
 
     final distance = isImperial ? rawDist * 0.621371 : rawDist;
     final avgSpeed = isImperial ? rawAvg * 0.621371 : rawAvg;
@@ -574,7 +593,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       isScrollControlled: true,
       builder: (context) => Consumer(
         builder: (context, ref, child) {
-          final scanResults = ref.watch(scanResultsProvider);
           final bleService = ref.read(bleServiceProvider);
 
           return Container(
@@ -582,7 +600,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
               color: AppColors.surfaceContainer,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(24),
+              ),
             ),
             child: Column(
               children: [
@@ -603,36 +623,152 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     color: AppColors.onSurface,
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 8),
+                Text(
+                  'Looking for MAC: 90:70:...',
+                  style: TextStyle(fontSize: 12, color: AppColors.primary),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: () => bleService.startScan(),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Refresh Scan'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryContainer,
+                    foregroundColor: AppColors.onPrimaryContainer,
+                  ),
+                ),
+                const SizedBox(height: 16),
                 Expanded(
-                  child: scanResults.when(
-                    data: (results) {
-                      if (results.isEmpty) {
-                        return const Center(child: Text('Scanning for devices...'));
+                  child: StreamBuilder<List<ScanResult>>(
+                    stream: FlutterBluePlus.scanResults,
+                    builder: (context, snapshot) {
+                      final results = snapshot.data ?? [];
+                      final connectedDevices = FlutterBluePlus.connectedDevices;
+                      final targetName = Constants.helmetDeviceName
+                          .toLowerCase();
+
+                      // Convert to display objects
+                      final List<Map<String, dynamic>> displayItems = [];
+
+                      for (final d in connectedDevices) {
+                        final mac = d.remoteId.str;
+                        final name = d.platformName.isNotEmpty
+                            ? d.platformName
+                            : "Connected Device";
+                        final isHelmet =
+                            name.toLowerCase().contains(targetName) ||
+                            mac.toUpperCase().startsWith("90:70");
+                        displayItems.add({
+                          'device': d,
+                          'name': name,
+                          'mac': mac,
+                          'rssi': -20,
+                          'isHelmet': isHelmet,
+                          'status': 'Connected',
+                        });
                       }
+
+                      for (final r in results) {
+                        // Avoid duplicates
+                        if (connectedDevices.any(
+                          (d) => d.remoteId == r.device.remoteId,
+                        )) {
+                          continue;
+                        }
+
+                        final mac = r.device.remoteId.str;
+                        final name = r.device.platformName.isNotEmpty
+                            ? r.device.platformName
+                            : (r.advertisementData.advName.isNotEmpty
+                                  ? r.advertisementData.advName
+                                  : "Unknown Device");
+                        final isHelmet =
+                            name.toLowerCase().contains(targetName) ||
+                            mac.toUpperCase().startsWith("90:70");
+
+                        displayItems.add({
+                          'device': r.device,
+                          'name': name,
+                          'mac': mac,
+                          'rssi': r.rssi,
+                          'isHelmet': isHelmet,
+                          'status': 'Available',
+                        });
+                      }
+
+                      // Sort: Helmets first
+                      displayItems.sort((a, b) {
+                        final aH = a['isHelmet'] ? 1 : 0;
+                        final bH = b['isHelmet'] ? 1 : 0;
+                        if (aH != bH) return bH - aH;
+                        return (b['rssi'] as int).compareTo(a['rssi'] as int);
+                      });
+
+                      if (displayItems.isEmpty) {
+                        return const Center(
+                          child: Text('Scanning for devices...'),
+                        );
+                      }
+
                       return ListView.builder(
-                        itemCount: results.length,
+                        itemCount: displayItems.length,
                         itemBuilder: (context, index) {
-                          final device = results[index].device;
+                          final item = displayItems[index];
+                          final device = item['device'] as BluetoothDevice;
+                          final isHelmet = item['isHelmet'] as bool;
+
                           return ListTile(
-                            leading: const Icon(Icons.bluetooth),
-                            title: Text(
-                              device.platformName.isEmpty
-                                  ? 'Unknown'
-                                  : device.platformName,
+                            leading: Icon(
+                              Icons.bluetooth,
+                              color: isHelmet
+                                  ? AppColors.secondary
+                                  : AppColors.outline,
                             ),
-                            subtitle: Text(device.remoteId.toString()),
-                            onTap: () {
-                              bleService.stopScan();
-                              bleService.connect(device);
-                              Navigator.pop(context);
+                            title: Text(
+                              isHelmet
+                                  ? "${item['name']} (HELMET FOUND)"
+                                  : item['name'],
+                              style: TextStyle(
+                                fontWeight: isHelmet
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                              ),
+                            ),
+                            subtitle: Text(
+                              "MAC: ${item['mac']} • ${item['status']} • RSSI: ${item['rssi']}",
+                            ),
+                            onTap: () async {
+                              final messenger = ScaffoldMessenger.of(context);
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Connecting to ${item['name']}...',
+                                  ),
+                                ),
+                              );
+
+                              await bleService.stopScan();
+                              await bleService.connect(device);
+
+                              if (!context.mounted) return;
+                              if (bleService.currentState ==
+                                  BleConnectionState.ready) {
+                                Navigator.pop(context);
+                              } else {
+                                messenger.showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Failed to initialize helmet services.',
+                                    ),
+                                  ),
+                                );
+                              }
                             },
                           );
                         },
                       );
                     },
-                    loading: () => const Center(child: CircularProgressIndicator()),
-                    error: (e, s) => Center(child: Text('Error: $e')),
                   ),
                 ),
               ],

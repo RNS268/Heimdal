@@ -9,7 +9,6 @@ import 'screens/settings/settings_screen.dart';
 import 'map_screen.dart';
 import 'providers/navigation_provider.dart';
 import 'services/crash_detection_service.dart';
-import 'services/background_service.dart';
 import 'providers/ble_provider.dart';
 import 'services/settings_service.dart';
 import 'providers/simulation_provider.dart';
@@ -99,14 +98,11 @@ class _MainNavigationScreenState extends ConsumerState<MainNavigationScreen> {
   void initState() {
     super.initState();
 
-    // Initialize display metrics and background service after first frame
-    // These run asynchronously without blocking the UI
+    // Initialize non-BLE app services after first frame.
+    // The helmet BLE connection should stay in the foreground flow unless the
+    // user explicitly starts the autonomous background monitor.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // Initialize display metrics (quick, non-blocking)
       _initializeDisplayMetrics();
-      
-      // Initialize background service in background without waiting
-      _initializeBackgroundServiceAsync();
     });
   }
 
@@ -117,15 +113,6 @@ class _MainNavigationScreenState extends ConsumerState<MainNavigationScreen> {
     } catch (e) {
       print('⚠️ [APP] Display metrics init failed: $e');
     }
-  }
-
-  void _initializeBackgroundServiceAsync() {
-    // Fire and forget - don't await, don't block UI
-    initializeBackgroundService().then((_) {
-      print('✓ [APP] Background service initialized');
-    }).catchError((e) {
-      print('⚠️ [APP] Background service init failed: $e');
-    });
   }
 
   @override

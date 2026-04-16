@@ -31,6 +31,7 @@ class BleService {
   StreamSubscription<List<ScanResult>>? _scanSubscription;
   Timer? _reconnectTimer;
   int _reconnectAttempts = 0;
+  BleConnectionState _lastState = BleConnectionState.disconnected;
 
   final _connectionStateController =
       StreamController<BleConnectionState>.broadcast();
@@ -41,6 +42,7 @@ class BleService {
 
   Stream<BleConnectionState> get connectionState =>
       _connectionStateController.stream;
+  BleConnectionState get currentState => _lastState;
   Stream<HelmetDataModel> get dataStream => _dataController.stream;
   Stream<List<ScanResult>> get scanResults => _scanResultsController.stream;
 
@@ -50,30 +52,60 @@ class BleService {
   /// Parsed accelerometer samples when firmware sends binary (3 / 6 / 12-byte frames).
   Stream<SensorData> get sensorDataStream => _sensorDataController.stream;
 
+  void _setState(BleConnectionState state) {
+    _lastState = state;
+    _connectionStateController.add(state);
+  }
+
   Future<void> startScan() async {
-    _connectionStateController.add(BleConnectionState.scanning);
+    _setState(BleConnectionState.scanning);
 
     try {
-      if (await FlutterBluePlus.isSupported == false) return;
+      if (await FlutterBluePlus.isSupported == false) {
+        _setState(BleConnectionState.error);
+        return;
+      }
       if (Platform.isAndroid) {
         final scanStatus = await Permission.bluetoothScan.request();
         final connectStatus = await Permission.bluetoothConnect.request();
-        final locationStatus = await Permission.locationWhenInUse.request();
 
-        if (!scanStatus.isGranted || !connectStatus.isGranted || !locationStatus.isGranted) {
-          _connectionStateController.add(BleConnectionState.error);
+        debugPrint('BLUETOOTH permissions - scan: $scanStatus, connect: $connectStatus');
+        
+        if (!scanStatus.isGranted || !connectStatus.isGranted) {
+          debugPrint('Bluetooth permissions denied!');
+          _setState(BleConnectionState.error);
           return;
+        }
+
+        // Best-effort location request for older Android stacks.
+        // Do not block scanning if location is denied on Android 12+.
+        final locStatus = await Permission.locationWhenInUse.request();
+        debugPrint('Location permission status: $locStatus');
+
+        final adapterState = await FlutterBluePlus.adapterState.first;
+        if (adapterState != BluetoothAdapterState.on) {
+          await FlutterBluePlus.turnOn();
         }
       }
 
+      await FlutterBluePlus.stopScan();
       _scanSubscription?.cancel();
       _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
         _scanResultsController.add(results);
+      }, onError: (_) {
+        _setState(BleConnectionState.error);
       });
 
-      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 10));
+      await FlutterBluePlus.startScan(
+        timeout: const Duration(seconds: 10),
+        withServices: [Guid(Constants.helmetServiceUuid)],
+        withNames: const ['Helmet', 'HelmetSensor'],
+        androidScanMode: AndroidScanMode.lowLatency,
+        androidUsesFineLocation: true,
+      );
     } catch (e) {
-      _connectionStateController.add(BleConnectionState.error);
+      debugPrint('Scan error: $e');
+      _setState(BleConnectionState.error);
     }
   }
 
@@ -82,7 +114,10 @@ class BleService {
   }
 
   Stream<List<DeviceModel>> scanDevices() async* {
-    await FlutterBluePlus.startScan(timeout: const Duration(seconds: 5));
+    await FlutterBluePlus.startScan(
+      timeout: const Duration(seconds: 5),
+      androidUsesFineLocation: false,
+    );
 
     yield* FlutterBluePlus.scanResults.map((results) {
       return results.map((r) {
@@ -103,24 +138,54 @@ class BleService {
   Future<void> connectToDevice(BluetoothDevice device) => connect(device);
 
   Future<void> connect(BluetoothDevice device) async {
-    _connectionStateController.add(BleConnectionState.connecting);
+    _setState(BleConnectionState.connecting);
     _reconnectAttempts = 0;
 
     try {
-      await device.connect(timeout: const Duration(seconds: 10));
+      final existingState = await device.connectionState.first;
+      if (existingState != BluetoothConnectionState.connected) {
+        await device.connect(timeout: const Duration(seconds: 10));
+      }
+
       _connectedDevice = device;
-      _connectionStateController.add(BleConnectionState.verifying);
+      
+      if (Platform.isAndroid) {
+        try {
+          await device.requestMtu(Constants.bleMtu);
+        } catch (e) {
+          debugPrint('MTU request failed: $e');
+        }
+      }
+      
+      _setState(BleConnectionState.verifying);
 
       final success = await _discoverServicesAndSubscribe(device);
       if (success) {
         // Success - Wait for acknowledgement if needed or just mark as ready
-        _connectionStateController.add(BleConnectionState.ready);
+        _setState(BleConnectionState.ready);
       } else {
-        _connectionStateController.add(BleConnectionState.wrongDevice);
+        _setState(BleConnectionState.wrongDevice);
         await device.disconnect();
       }
     } catch (e) {
-      _connectionStateController.add(BleConnectionState.error);
+      try {
+        final fallbackState = await device.connectionState.first;
+        if (fallbackState == BluetoothConnectionState.connected) {
+          _connectedDevice = device;
+          _setState(BleConnectionState.verifying);
+
+          final success = await _discoverServicesAndSubscribe(device);
+          if (success) {
+            _setState(BleConnectionState.ready);
+            return;
+          }
+        }
+      } catch (_) {
+        // Keep the original error path below if the fallback state check fails.
+      }
+
+      debugPrint('Connect error: $e');
+      _setState(BleConnectionState.error);
       _scheduleReconnect(device);
     }
   }
@@ -185,18 +250,10 @@ class BleService {
                   await characteristic.setNotifyValue(true);
                   found = true;
                   _dataSubscription?.cancel();
-                  _dataSubscription = characteristic.lastValueStream.listen((value) {
+                  // For flutter_blue_plus 1.30.0+, onValueReceived is preferred
+                  _dataSubscription = characteristic.onValueReceived.listen((value) {
                     final copy = List<int>.from(value);
                     _rawBytesController.add(copy);
-                    if (kDebugMode) {
-                      debugPrint('BLE raw: $copy');
-                    }
-
-                    final binary = SensorData.tryParse(copy);
-                    if (binary != null) {
-                      _emitSensorSample(binary);
-                      return;
-                    }
 
                     final incoming = String.fromCharCodes(value);
                     incomingBuffer += incoming;
@@ -208,9 +265,11 @@ class BleService {
                       processTextPacket(packet);
                     }
 
+                    // Fallback if data doesn't end with newline but we have a sizable chunk
                     if (!incomingBuffer.contains('\n') &&
                         incomingBuffer.startsWith('SP:') &&
-                        incomingBuffer.contains('DEV:')) {
+                        incomingBuffer.length > 30 &&
+                        (incomingBuffer.contains('AZ:') || incomingBuffer.contains('DEV:'))) {
                       processTextPacket(incomingBuffer);
                       incomingBuffer = '';
                     }
@@ -232,7 +291,7 @@ class BleService {
 
   void _scheduleReconnect(BluetoothDevice device) {
     if (_reconnectAttempts >= 5) {
-      _connectionStateController.add(BleConnectionState.error);
+      _setState(BleConnectionState.error);
       return;
     }
 
@@ -256,7 +315,7 @@ class BleService {
       _connectedDevice = null;
     }
 
-    _connectionStateController.add(BleConnectionState.disconnected);
+    _setState(BleConnectionState.disconnected);
   }
 
   void dispose() {

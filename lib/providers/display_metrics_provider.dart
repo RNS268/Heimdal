@@ -9,7 +9,7 @@ final displayMetricsProvider = FutureProvider<DisplayMetrics>((ref) async {
 /// Get display metrics (synchronous access for already loaded data)
 final displayMetricsDataProvider = StateProvider<DisplayMetrics?>((ref) {
   ref.listen(displayMetricsProvider, (previous, next) {
-    ref.state = next.valueOrNull;
+    ref.controller.state = next.valueOrNull;
   });
   
   return null;

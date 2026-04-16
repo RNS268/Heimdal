@@ -11,7 +11,6 @@ import '../../models/helmet_data.dart';
 import '../../processing/data_processor.dart';
 import '../../services/settings_service.dart';
 import '../../services/background_service.dart';
-import '../../utils/constants.dart';
 
 class RawDataScreen extends ConsumerStatefulWidget {
   const RawDataScreen({super.key});
@@ -30,13 +29,7 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
   List<Map<String, String>> _asciiData = [];
   StreamSubscription<List<Map<String, String>>>? _asciiDataSubscription;
 
-  // Cached data for tabs
-  late AsyncValue<List<int>> _rawAsync;
-  late BleConnectionState? _bleState;
-  late SettingsModel _settings;
-  late SimulationState _sim;
-  late HelmetDataModel? _data;
-
+  // Status trackers
   @override
   void initState() {
     super.initState();
@@ -87,42 +80,10 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
     final settings = ref.watch(settingsProvider);
     final sim = ref.watch(simulationProvider);
 
-    // Cache values for tab methods
-    _rawAsync = rawAsync;
-    _bleState = bleState.valueOrNull;
-    _settings = settings;
-    _sim = sim;
-    _data = data;
-    final sensor = sensorAsync.valueOrNull;
-
-    // Effective sensor data: prefer simulation when active
-    final SensorData? accel = sim.isRunning
-        ? SensorData(
-            ax: sim.ax, ay: sim.ay, az: sim.az,
-            gx: sim.gx, gy: sim.gy, gz: sim.gz,
-          )
-        : (sensor ??
-            (data != null
-                ? SensorData(ax: data.ax, ay: data.ay, az: data.az)
-                : null));
-    final totalA = accel != null ? DataProcessor.totalAccelerationMagnitude(accel) : null;
-    final tiltAxAz = accel != null ? DataProcessor.tiltAxAzDegrees(accel) : null;
-    final motion = accel != null ? DataProcessor.motionStatusGravityReferenced(accel) : null;
     final isImperial = settings.units == 'Imperial (mph)';
-
-    // Speed / brake / collision: prefer simulation
-    final double effectiveSpeed = sim.isRunning ? sim.speed : 0.0;
-    final bool effectiveBraking = sim.isRunning ? sim.isBraking : false;
-    final bool effectiveCollision = sim.isRunning ? sim.isCrash : false;
-    final double effectiveLat = sim.isRunning
-        ? sim.latitude
-        : (data != null && data.latitude != 0 ? data.latitude : 0);
-    final double effectiveLng = sim.isRunning
-        ? sim.longitude
-        : (data != null && data.longitude != 0 ? data.longitude : 0);
-
+    final double effectiveSpeed = sim.isRunning ? sim.speed : (data?.speed ?? 0.0);
     final speed = isImperial ? effectiveSpeed * 0.621371 : effectiveSpeed;
-    final speedUnit = isImperial ? 'mph' : 'km/h';
+
 
     // Generate ASCII data from simulation when active, otherwise use background service
     if (sim.isRunning) {
@@ -428,7 +389,7 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       children: [
         Text(
-          'SENSOR GRAPHS (AX, AY, AZ)',
+          'SENSOR GRAPHS (Accelerometer + Gyroscope)',
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w700,
@@ -438,6 +399,8 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
         ),
         const SizedBox(height: 12),
         _buildSensorGraphs(_latestSensorData),
+        const SizedBox(height: 24),
+        _buildGyroGraphs(_latestSensorData),
       ],
     );
   }
@@ -457,7 +420,7 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Real-time Accelerometer',
+                'Real-time Accelerometer (m/s²)',
                 style: TextStyle(
                   color: AppColors.primary,
                   fontSize: 14,
@@ -474,11 +437,11 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
             ],
           ),
           const SizedBox(height: 20),
-          _buildSensorBar('AX (X-axis)', sensorData['ax'] ?? 0, Colors.red),
+          _buildAccelBar('AX (X-axis)', sensorData['ax'] ?? 0, Colors.red),
           const SizedBox(height: 12),
-          _buildSensorBar('AY (Y-axis)', sensorData['ay'] ?? 0, Colors.green),
+          _buildAccelBar('AY (Y-axis)', sensorData['ay'] ?? 0, Colors.green),
           const SizedBox(height: 12),
-          _buildSensorBar('AZ (Z-axis)', sensorData['az'] ?? 0, Colors.blue),
+          _buildAccelBar('AZ (Z-axis)', sensorData['az'] ?? 0, Colors.blue),
           const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -490,6 +453,205 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildGyroGraphs(Map<String, double> sensorData) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Real-time Gyroscope',
+                style: TextStyle(
+                  color: AppColors.primary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                'Last update: ${DateTime.now().toIso8601String().substring(11, 19)}',
+                style: TextStyle(
+                  color: AppColors.outline,
+                  fontSize: 10,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          _buildGyroBar('GX (X-axis)', sensorData['gx'] ?? 0, Colors.orange),
+          const SizedBox(height: 12),
+          _buildGyroBar('GY (Y-axis)', sensorData['gy'] ?? 0, Colors.purple),
+          const SizedBox(height: 12),
+          _buildGyroBar('GZ (Z-axis)', sensorData['gz'] ?? 0, Colors.cyan),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildSensorValue('GX Total', sensorData['gx'] ?? 0),
+              _buildSensorValue('GY Total', sensorData['gy'] ?? 0),
+              _buildSensorValue('GZ Total', sensorData['gz'] ?? 0),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccelBar(String label, double value, Color color) {
+    // Normalize accelerometer value for display (-20 to +20 m/s² range)
+    final normalizedValue = (value / 20.0).clamp(-1.0, 1.0);
+    final barWidth = (normalizedValue.abs() * 120).toDouble(); // Max 120px bar
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            SizedBox(
+              width: 80,
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: AppColors.onSurface,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Stack(
+                children: [
+                  // Background bar
+                  Container(
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  // Value bar
+                  Align(
+                    alignment: normalizedValue >= 0 ? Alignment.centerLeft : Alignment.centerRight,
+                    child: Container(
+                      width: barWidth,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                  // Center line
+                  Center(
+                    child: Container(
+                      width: 2,
+                      height: 20,
+                      color: Colors.white.withValues(alpha: 0.3),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: 60,
+              child: Text(
+                value.toStringAsFixed(2),
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGyroBar(String label, double value, Color color) {
+    // Normalize gyroscope value for display (-10 to +10 rad/s range)
+    final normalizedValue = (value / 10.0).clamp(-1.0, 1.0);
+    final barWidth = (normalizedValue.abs() * 120).toDouble(); // Max 120px bar
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            SizedBox(
+              width: 80,
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: AppColors.onSurface,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Stack(
+                children: [
+                  // Background bar
+                  Container(
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  // Value bar
+                  Align(
+                    alignment: normalizedValue >= 0 ? Alignment.centerLeft : Alignment.centerRight,
+                    child: Container(
+                      width: barWidth,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                  // Center line
+                  Center(
+                    child: Container(
+                      width: 2,
+                      height: 20,
+                      color: Colors.white.withValues(alpha: 0.3),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: 60,
+              child: Text(
+                value.toStringAsFixed(3),
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 

@@ -77,6 +77,28 @@ public: // <-- CRITICAL FIX: Make public
   }
 };
 
+class MyCharacteristicCallbacks: public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* pCharacteristic) {
+    std::string value = pCharacteristic->getValue();
+    if (value.length() > 0) {
+      String cmd = String(value.c_str());
+      Serial.print("BLE CMD RECEIVED: "); Serial.println(cmd);
+      
+      if (cmd.startsWith("I:L")) {
+        motion.indicator = IND_LEFT;
+      } else if (cmd.startsWith("I:R")) {
+        motion.indicator = IND_RIGHT;
+      } else if (cmd.startsWith("I:NONE")) {
+        motion.indicator = IND_NONE;
+      } else if (cmd.startsWith("B:1")) {
+        motion.brake = true;
+      } else if (cmd.startsWith("B:0")) {
+        motion.brake = false;
+      }
+    }
+  }
+};
+
 /* ================= DATA STRUCTURES ================= */
 
 typedef enum {
@@ -386,7 +408,11 @@ void setup() {
 
   NimBLEService *service = pServer->createService(SERVICE_UUID);
   statusChar = service->createCharacteristic(STATUS_UUID,
-                 NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+                 NIMBLE_PROPERTY::READ | 
+                 NIMBLE_PROPERTY::NOTIFY | 
+                 NIMBLE_PROPERTY::WRITE |
+                 NIMBLE_PROPERTY::WRITE_NR);
+  statusChar->setCallbacks(new MyCharacteristicCallbacks());
   service->start();
   Serial.println("Service started");
 

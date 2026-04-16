@@ -5,6 +5,7 @@ import '../models/device_model.dart';
 import '../models/helmet_data.dart';
 import '../models/sensor_data.dart';
 import '../services/ble_service.dart';
+import '../services/background_service.dart';
 
 export '../services/ble_service.dart' show BleConnectionState, BleService;
 
@@ -35,6 +36,15 @@ final rawBleDataProvider = StreamProvider<List<int>>((ref) {
 final sensorDataStreamProvider = StreamProvider<SensorData>((ref) {
   final service = ref.watch(bleServiceProvider);
   return service.sensorDataStream;
+});
+
+final serialMonitorStreamProvider = StreamProvider<String>((ref) {
+  final service = ref.watch(bleServiceProvider);
+  return service.serialMonitorStream;
+});
+
+final backgroundSerialDataProvider = StreamProvider<String>((ref) {
+  return serialDataStream;
 });
 
 final scanResultsProvider = StreamProvider<List<ScanResult>>((ref) {

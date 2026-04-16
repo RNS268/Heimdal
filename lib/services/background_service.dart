@@ -44,6 +44,10 @@ final sensorDataStream = sensorDataController.stream;
 final asciiDataController = StreamController<List<Map<String, String>>>.broadcast();
 final asciiDataStream = asciiDataController.stream;
 
+/// Dedicated stream for raw serial data (ASCII text packets)
+final serialDataController = StreamController<String>.broadcast();
+final serialDataStream = serialDataController.stream;
+
 /// Indicator states stream for UI indicators
 final indicatorStateController = StreamController<Map<String, bool>>.broadcast();
 final indicatorStateStream = indicatorStateController.stream;
@@ -154,15 +158,11 @@ Future<void> initializeBackgroundService() async {
       androidConfiguration: AndroidConfiguration(
         onStart: onStart,
         isForegroundMode: true,
-        // Do not auto-start the BLE background worker during normal app launch.
-        // The foreground UI owns the helmet connection by default; background
-        // monitoring should only start when explicitly requested.
-        autoStart: false,
+        autoStart: true,
         autoStartOnBoot: true,
         notificationChannelId: 'helmet_safety_channel',
         initialNotificationTitle: 'Helmet Safety Active',
         initialNotificationContent: 'Monitoring for crashes...',
-        foregroundServiceNotificationId: 888,
       ),
       iosConfiguration: IosConfiguration(
         onForeground: onStart,
@@ -170,7 +170,8 @@ Future<void> initializeBackgroundService() async {
       ),
     );
 
-    debugLogController.add('[SERVICE] Background service configured');
+    service.startService();
+    debugLogController.add('[SERVICE] Background service initialized');
   } catch (e) {
     debugLogController.add('[SERVICE] Failed to initialize: $e');
   }
@@ -224,6 +225,13 @@ void onStart(ServiceInstance service) async {
       periodicTimer.cancel();
       bleManager.dispose();
       service.stopSelf();
+    });
+
+    service.on('sendCommand').listen((event) {
+      final command = event?['command'] as String?;
+      if (command != null) {
+        bleManager.sendCommand(command);
+      }
     });
   } catch (e) {
     debugLogController.add('[SERVICE] Error during initialization: $e');
@@ -320,6 +328,7 @@ class _BLEManager {
   StreamSubscription? _scanSubscription;
   StreamSubscription? _connectionSubscription;
   StreamSubscription? _dataSubscription;
+  BluetoothCharacteristic? _dataCharacteristic;
 
   bool isConnected = false;
   int reconnectAttempts = 0;
@@ -374,7 +383,10 @@ class _BLEManager {
     debugLogController.add('[BLE] Starting device scan...');
 
     try {
-      _scanSubscription?.cancel();
+      // ignore: unused_result
+      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 8));
+
+      // ignore: unused_result
       _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
         for (var result in results) {
           final deviceName = result.device.platformName.isNotEmpty
@@ -396,15 +408,6 @@ class _BLEManager {
           }
         }
       });
-
-      // ignore: unused_result
-      await FlutterBluePlus.startScan(
-        timeout: const Duration(seconds: 8),
-        withServices: [Guid(serviceUuid)],
-        withNames: helmetDeviceNames.toList(),
-        androidScanMode: AndroidScanMode.lowLatency,
-        androidUsesFineLocation: true,
-      );
     } catch (e) {
       _onError?.call('Scan failed: $e');
       await Future.delayed(const Duration(seconds: 5));
@@ -459,6 +462,7 @@ class _BLEManager {
               debugLogController.add('[BLE] Found data characteristic: $characteristicUuid');
 
               await characteristic.setNotifyValue(true);
+              _dataCharacteristic = characteristic;
 
               _dataSubscription = characteristic.lastValueStream.listen((value) {
                 _parseData(value, _sosManager);
@@ -542,6 +546,21 @@ class _BLEManager {
     }
   }
 
+  Future<void> sendCommand(String command) async {
+    if (_dataCharacteristic == null || !isConnected) {
+      debugLogController.add('[BLE] Cannot send command: Not connected');
+      return;
+    }
+
+    try {
+      final data = command.endsWith('\n') ? command : '$command\n';
+      await _dataCharacteristic!.write(data.codeUnits);
+      debugLogController.add('[BLE] Sent command: $command');
+    } catch (e) {
+      debugLogController.add('[BLE] Failed to send command: $e');
+    }
+  }
+
   Future<SensorDataModel?> _parseTextProtocol(String data) async {
     try {
       // Handle missing comma after CLK value (ESP32 sends CLK:0DEV: together)
@@ -586,9 +605,14 @@ class _BLEManager {
       
       final clock = int.tryParse(pairs['CLK'] ?? '0') ?? 0;
       
-      // Parse DEV data for sensor values
-      double ax = 0.0, ay = 0.0, az = 9.81;
-      double gx = 0.0, gy = 0.0, gz = 0.0;
+      // Parse sensor values (AX, AY, AZ) - supporting both top-level and DEV level
+      double ax = double.tryParse(pairs['AX'] ?? '') ?? 0.0;
+      double ay = double.tryParse(pairs['AY'] ?? '') ?? 0.0;
+      double az = double.tryParse(pairs['AZ'] ?? '') ?? 9.81;
+      double gx = double.tryParse(pairs['GX'] ?? '') ?? 0.0;
+      double gy = double.tryParse(pairs['GY'] ?? '') ?? 0.0;
+      double gz = double.tryParse(pairs['GZ'] ?? '') ?? 0.0;
+      
       final devData = pairs['DEV'] ?? '';
       if (devData.isNotEmpty) {
         final devParts = devData.split(',');
@@ -600,18 +624,12 @@ class _BLEManager {
           final value = double.tryParse(kv[1].trim()) ?? 0.0;
           
           switch (key) {
-            case 'AX':
-              ax = value;
-            case 'AY':
-              ay = value;
-            case 'AZ':
-              az = value;
-            case 'GX':
-              gx = value;
-            case 'GY':
-              gy = value;
-            case 'GZ':
-              gz = value;
+            case 'AX': if (ax == 0.0) ax = value;
+            case 'AY': if (ay == 0.0) ay = value;
+            case 'AZ': if (az == 9.81) az = value;
+            case 'GX': gx = value;
+            case 'GY': gy = value;
+            case 'GZ': gz = value;
           }
         }
       }
@@ -672,13 +690,11 @@ class _BLEManager {
       // Send raw data to UI stream
       backgroundRawDataController.add(data);
       
-      // Log to debug stream instead of print
-      final hexData = data.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(' ');
-      final asciiData = String.fromCharCodes(data.where((byte) => byte >= 32 && byte <= 126));
-      
-      debugLogController.add('[RAW DATA] ${data.length} bytes received');
-      debugLogController.add('[HEX] $hexData');
-      debugLogController.add('[ASCII] $asciiData');
+      final asciiData = String.fromCharCodes(data).trim();
+      if (asciiData.isNotEmpty) {
+        serialDataController.add(asciiData);
+        debugLogController.add('[SERIAL] $asciiData');
+      }
     } catch (e) {
       debugLogController.add('[RAW DATA ERROR] $e');
     }

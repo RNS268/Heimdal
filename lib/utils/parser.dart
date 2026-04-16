@@ -23,7 +23,7 @@ class Parser {
       // Split by comma, but handle DEV field specially (it may contain commas within its value)
       final parts = <String>[];
       String? devBuffer;
-      
+
       for (final part in trimmed.split(',')) {
         if (part.startsWith('DEV:')) {
           devBuffer = part;
@@ -40,7 +40,7 @@ class Parser {
           parts.add(part);
         }
       }
-      
+
       // Add any remaining DEV buffer
       if (devBuffer != null) {
         parts.add(devBuffer);
@@ -80,10 +80,16 @@ class Parser {
             // DEV value is everything after "DEV:"
             rawDevData = part.substring(4); // Skip "DEV:"
             _parseDevInfo(rawDevData, (aVal, ayVal, azVal) {
-              ax = aVal;
-              ay = ayVal;
-              az = azVal;
+              if (ax == 0.0) ax = aVal;
+              if (ay == 0.0) ay = ayVal;
+              if (az == 9.81) az = azVal;
             });
+          case 'AX':
+            ax = double.tryParse(value) ?? ax;
+          case 'AY':
+            ay = double.tryParse(value) ?? ay;
+          case 'AZ':
+            az = double.tryParse(value) ?? az;
         }
       }
 
@@ -107,18 +113,21 @@ class Parser {
   }
 
   /// Parse DEV string: "AX:<ax>,AY:<ay>,AZ:<az>,MAG:<mag>,P:<pitch>,R:<roll>"
-  static void _parseDevInfo(String devInfo, Function(double, double, double) onParsed) {
+  static void _parseDevInfo(
+    String devInfo,
+    Function(double, double, double) onParsed,
+  ) {
     try {
       double ax = 0.0, ay = 0.0, az = 9.81;
-      
+
       final devParts = devInfo.split(',');
       for (final part in devParts) {
         final kv = part.split(':');
         if (kv.length != 2) continue;
-        
+
         final key = kv[0].trim().toUpperCase();
         final value = double.tryParse(kv[1].trim()) ?? 0.0;
-        
+
         switch (key) {
           case 'AX':
             ax = value;
@@ -128,7 +137,7 @@ class Parser {
             az = value;
         }
       }
-      
+
       onParsed(ax, ay, az);
     } catch (_) {
       // Silent fail, use defaults

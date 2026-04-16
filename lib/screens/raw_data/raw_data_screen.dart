@@ -28,6 +28,14 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
   StreamSubscription<Map<String, double>>? _sensorDataSubscription;
   List<Map<String, String>> _asciiData = [];
   StreamSubscription<List<Map<String, String>>>? _asciiDataSubscription;
+  String _latestRawAscii = '';
+  StreamSubscription<String>? _rawAsciiSubscription;
+  StreamSubscription<String>? _backgroundRawAsciiSubscription;
+  final List<double> _axHistory = [];
+  final List<double> _ayHistory = [];
+  final List<double> _azHistory = [];
+  static const int _maxHistory = 50;
+  final List<String> _asciiLog = [];
 
   // Status trackers
   @override
@@ -51,12 +59,29 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
     _sensorDataSubscription = sensorDataStream.listen((data) {
       setState(() {
         _latestSensorData = data;
+        _updateHistory(data['ax'] ?? 0, data['ay'] ?? 0, data['az'] ?? 0);
       });
     });
 
     _asciiDataSubscription = asciiDataStream.listen((data) {
       setState(() {
         _asciiData = data;
+      });
+    });
+
+    _rawAsciiSubscription = ref.read(serialMonitorStreamProvider.stream).listen((data) {
+      setState(() {
+        _latestRawAscii = data;
+        _asciiLog.insert(0, data);
+        if (_asciiLog.length > 50) _asciiLog.removeLast();
+      });
+    });
+
+    _backgroundRawAsciiSubscription = ref.read(backgroundSerialDataProvider.stream).listen((data) {
+      setState(() {
+        _latestRawAscii = data;
+        _asciiLog.insert(0, data);
+        if (_asciiLog.length > 50) _asciiLog.removeLast();
       });
     });
   }
@@ -67,6 +92,8 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
     _debugLogSubscription?.cancel();
     _sensorDataSubscription?.cancel();
     _asciiDataSubscription?.cancel();
+    _rawAsciiSubscription?.cancel();
+    _backgroundRawAsciiSubscription?.cancel();
     super.dispose();
   }
 
@@ -270,6 +297,71 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
               color: AppColors.outline,
             ),
           ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(16),
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+            ),
+            child: Text(
+              _latestRawAscii.isEmpty ? 'Waiting for packets...' : _latestRawAscii,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 14,
+                color: AppColors.primary,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'PACKET HISTORY (SERIAL MONITOR)',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 2,
+              color: AppColors.outline,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            height: 200,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+            ),
+            child: ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: _asciiLog.length,
+              itemBuilder: (context, index) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    _asciiLog[index],
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      color: AppColors.primary.withValues(alpha: 0.7),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'PARSED FIELDS',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 2,
+              color: AppColors.outline,
+            ),
+          ),
           const SizedBox(height: 16),
           if (_asciiData.isEmpty)
             Center(
@@ -450,6 +542,17 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
               _buildSensorValue('Pitch', sensorData['pitch'] ?? 0),
               _buildSensorValue('Speed', sensorData['speed'] ?? 0),
             ],
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            height: 100,
+            width: double.infinity,
+            child: CustomPaint(
+              painter: WaveformPainter(
+                histories: [_axHistory, _ayHistory, _azHistory],
+                colors: [Colors.red, Colors.green, Colors.blue],
+              ),
+            ),
           ),
         ],
       ),
@@ -832,6 +935,68 @@ class _RawDataScreenState extends ConsumerState<RawDataScreen> {
       {'label': 'Scenario', 'value': sim.scenario, 'icon': '🎭'},
     ];
   }
+
+  void _updateHistory(double ax, double ay, double az) {
+    _axHistory.add(ax);
+    _ayHistory.add(ay);
+    _azHistory.add(az);
+    if (_axHistory.length > _maxHistory) _axHistory.removeAt(0);
+    if (_ayHistory.length > _maxHistory) _ayHistory.removeAt(0);
+    if (_azHistory.length > _maxHistory) _azHistory.removeAt(0);
+  }
+}
+
+class WaveformPainter extends CustomPainter {
+  final List<List<double>> histories;
+  final List<Color> colors;
+
+  WaveformPainter({required this.histories, required this.colors});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    // Draw background grid
+    final gridPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.1)
+      ..strokeWidth = 1;
+
+    for (int i = 0; i < 5; i++) {
+      final y = size.height * i / 4;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+    }
+
+    const double maxVal = 20.0;
+    const double minVal = -20.0;
+    const double range = maxVal - minVal;
+
+    for (int h = 0; h < histories.length; h++) {
+      final history = histories[h];
+      if (history.isEmpty) continue;
+
+      paint.color = colors[h];
+      final path = Path();
+
+      for (int i = 0; i < history.length; i++) {
+        final x = size.width * i / 49;
+        final normalized = (history[i] - minVal) / range;
+        final y = size.height - (normalized * size.height);
+
+        if (i == 0) {
+          path.moveTo(x, y);
+        } else {
+          path.lineTo(x, y);
+        }
+      }
+      canvas.drawPath(path, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant WaveformPainter oldDelegate) => true;
 }
 
 

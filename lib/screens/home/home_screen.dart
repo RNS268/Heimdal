@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/glass_card.dart';
 import '../../widgets/speed_display.dart';
@@ -95,6 +96,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           sim,
                         ),
                         const SizedBox(height: 24),
+                        _buildHelmetControls(context, ref, isConnected),
+                        const SizedBox(height: 24),
                       ],
                     ),
                   ),
@@ -105,6 +108,132 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildHelmetControls(BuildContext context, WidgetRef ref, bool isConnected) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'HELMET CONTROLS',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 2,
+            color: AppColors.outlineVariant,
+          ),
+        ),
+        const SizedBox(height: 16),
+        GlassCard(
+          padding: const EdgeInsets.all(20),
+          borderRadius: 12,
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildControlButton(
+                      label: 'LEFT',
+                      icon: Icons.keyboard_arrow_left,
+                      color: Colors.orange,
+                      onPressed: () => _sendCommand(ref, 'I:L'),
+                      isActive: false, // Could be linked to current state if desired
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildControlButton(
+                      label: 'OFF',
+                      icon: Icons.close,
+                      color: Colors.grey,
+                      onPressed: () => _sendCommand(ref, 'I:NONE'),
+                      isActive: true,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildControlButton(
+                      label: 'RIGHT',
+                      icon: Icons.keyboard_arrow_right,
+                      color: Colors.orange,
+                      onPressed: () => _sendCommand(ref, 'I:R'),
+                      isActive: false,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildControlButton(
+                      label: 'BRAKE ON',
+                      icon: Icons.stop_circle,
+                      color: Colors.red,
+                      onPressed: () => _sendCommand(ref, 'B:1'),
+                      isActive: false,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildControlButton(
+                      label: 'BRAKE OFF',
+                      icon: Icons.play_circle_outline,
+                      color: Colors.green,
+                      onPressed: () => _sendCommand(ref, 'B:0'),
+                      isActive: false,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildControlButton({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onPressed,
+    required bool isActive,
+  }) {
+    return InkWell(
+      onTap: onPressed,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 24),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _sendCommand(WidgetRef ref, String command) {
+    // Send via background service bridge
+    FlutterBackgroundService().invoke('sendCommand', {'command': command});
+    
+    // Also try direct command if UI is connected
+    ref.read(bleServiceProvider).sendCommand(command);
   }
 
   Widget _buildTopBar(
@@ -302,11 +431,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'NORMAL',
+                      helmetData?.crash == true ? 'CRASH DETECTED' : 'NORMAL',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
-                        color: AppColors.success,
+                        color: helmetData?.crash == true ? AppColors.error : AppColors.success,
                       ),
                     ),
                   ],

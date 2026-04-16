@@ -39,6 +39,7 @@ class BleService {
   final _scanResultsController = StreamController<List<ScanResult>>.broadcast();
   final _rawBytesController = StreamController<List<int>>.broadcast();
   final _sensorDataController = StreamController<SensorData>.broadcast();
+  final _serialMonitorController = StreamController<String>.broadcast();
 
   Stream<BleConnectionState> get connectionState =>
       _connectionStateController.stream;
@@ -51,6 +52,9 @@ class BleService {
 
   /// Parsed accelerometer samples when firmware sends binary (3 / 6 / 12-byte frames).
   Stream<SensorData> get sensorDataStream => _sensorDataController.stream;
+
+  /// Raw ASCII string stream for serial monitor logging.
+  Stream<String> get serialMonitorStream => _serialMonitorController.stream;
 
   void _setState(BleConnectionState state) {
     _lastState = state;
@@ -98,10 +102,7 @@ class BleService {
 
       await FlutterBluePlus.startScan(
         timeout: const Duration(seconds: 10),
-        withServices: [Guid(Constants.helmetServiceUuid)],
-        withNames: const ['Helmet', 'HelmetSensor'],
-        androidScanMode: AndroidScanMode.lowLatency,
-        androidUsesFineLocation: true,
+        androidUsesFineLocation: false,
       );
     } catch (e) {
       debugPrint('Scan error: $e');
@@ -230,6 +231,7 @@ class BleService {
           final parsed = Parser.parse(trimmedPacket);
           if (parsed != null) {
             _dataController.add(parsed);
+            _serialMonitorController.add(trimmedPacket);
             _sensorDataController.add(
               SensorData(
                 ax: parsed.ax,
@@ -303,6 +305,39 @@ class BleService {
       await disconnect();
       await connect(device);
     });
+  }
+
+  /// Sends a command to the connected helmet device.
+  Future<bool> sendCommand(String command) async {
+    if (_connectedDevice == null || _lastState != BleConnectionState.ready) {
+      return false;
+    }
+
+    try {
+      final services = await _connectedDevice!.discoverServices();
+      for (final service in services) {
+        if (service.uuid.toString().toLowerCase() ==
+            Constants.helmetServiceUuid.toLowerCase()) {
+          for (final characteristic in service.characteristics) {
+            if (characteristic.uuid.toString().toLowerCase() ==
+                Constants.helmetCharacteristicUuid.toLowerCase()) {
+              if (characteristic.properties.write ||
+                  characteristic.properties.writeWithoutResponse) {
+                // Add newline if missing as our protocol expects it
+                final data = command.endsWith('\n') ? command : '$command\n';
+                await characteristic.write(data.codeUnits);
+                debugPrint('Command sent: $data');
+                return true;
+              }
+            }
+          }
+        }
+      }
+      return false;
+    } catch (e) {
+      debugPrint('Send command error: $e');
+      return false;
+    }
   }
 
   Future<void> disconnect() async {

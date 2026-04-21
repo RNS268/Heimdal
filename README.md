@@ -23,14 +23,14 @@ Built as a competition-grade engineering project at the **Government Institute o
 
 ## Features
 
-**| Feature                  | Description                                                  |**
-|--------------------------|--------------------------------------------------------------**|**
-| 🚨 **Crash Detection**   | Gyroscope-based impact & fall detection with automatic alert |
-| 📍 **GPS Tracking**      | Real-time location tracking with map integration             |
-| 💡 **LED Signaling**     | BLE-controlled turn signals and brake lights                 |
-| 📡 **BLE Communication** | Low-latency Bluetooth 5.0 link between helmet and phone      |
-| 🎵 **Music Controls**    | Helmet-integrated playback controls forwarded via BLE        |
-| 📊 **Raw Sensor Data**   | Live IMU telemetry stream for debugging and logging          |
+| Feature | Description |
+|---|---|
+| 🚨 **Crash Detection** | Gyroscope-based impact & fall detection with automatic alert |
+| 📍 **GPS Tracking** | Real-time location tracking with map integration |
+| 💡 **LED Signaling** | BLE-controlled turn signals and brake lights |
+| 📡 **BLE Communication** | Low-latency Bluetooth 5.0 link between helmet and phone |
+| 🎵 **Music Controls** | Helmet-integrated playback controls forwarded via BLE |
+| 📊 **Raw Sensor Data** | Live IMU telemetry stream for debugging and logging |
 
 ---
 

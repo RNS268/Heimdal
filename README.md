@@ -23,14 +23,14 @@ Built as a competition-grade engineering project at the **Government Institute o
 
 ## Features
 
-| Feature | Description |
-|---|---|
-| 🚨 **Crash Detection** | Gyroscope-based impact & fall detection with automatic alert |
-| 📍 **GPS Tracking** | Real-time location tracking with map integration |
-| 💡 **LED Signaling** | BLE-controlled turn signals and brake lights |
-| 📡 **BLE Communication** | Low-latency Bluetooth 5.0 link between helmet and phone |
-| 🎵 **Music Controls** | Helmet-integrated playback controls forwarded via BLE |
-| 📊 **Raw Sensor Data** | Live IMU telemetry stream for debugging and logging |
+**| Feature                  | Description                                                  |**
+|--------------------------|--------------------------------------------------------------**|**
+| 🚨 **Crash Detection**   | Gyroscope-based impact & fall detection with automatic alert |
+| 📍 **GPS Tracking**      | Real-time location tracking with map integration             |
+| 💡 **LED Signaling**     | BLE-controlled turn signals and brake lights                 |
+| 📡 **BLE Communication** | Low-latency Bluetooth 5.0 link between helmet and phone      |
+| 🎵 **Music Controls**    | Helmet-integrated playback controls forwarded via BLE        |
+| 📊 **Raw Sensor Data**   | Live IMU telemetry stream for debugging and logging          |
 
 ---
 
@@ -38,7 +38,7 @@ Built as a competition-grade engineering project at the **Government Institute o
 
 ```
 ┌─────────────────────────────┐         BLE 5.0         ┌──────────────────────────┐
-│        ESP32-S3 Helmet       │◄───────────────────────►│     Flutter Mobile App   │
+│        ESP32-S3 Helmet      │◄───────────────────────►│     Flutter Mobile App   │
 │                             │                         │                          │
 │  • MPU6050 Gyroscope/Accel  │                         │  • Home Dashboard        │
 │  • GPS Module               │                         │  • Accident Detection    │
@@ -92,12 +92,12 @@ Written in C++ using the ESP-IDF / Arduino framework for ESP32-S3.
 
 ### BLE Profile
 
-| Service | Characteristic | Direction | Description |
-|---|---|---|---|
-| `0x180D` | `0x2A37` | Notify | IMU sensor stream |
-| `0x1819` | `0x2A67` | Notify | GPS location |
-| `0xFF01` | `0xFF02` | Write | LED command |
-| `0xFF01` | `0xFF03` | Notify | Crash alert |
+| Service | Characteristic | Direction | Description         |
+|----------|---------------|-----------|---------------------|
+| `0x180D` | `0x2A37`      | Notify    | IMU sensor stream   |
+| `0x1819` | `0x2A67`      | Notify    | GPS location        |
+| `0xFF01` | `0xFF02`      | Write     | LED command         |
+| `0xFF01` | `0xFF03`      | Notify    | Crash alert         |
 
 ---
 
